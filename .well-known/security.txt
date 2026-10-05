@@ -1,0 +1,5 @@
+Contact: https://github.com/VadimBley/gi-ai/security/advisories/new
+Expires: 2027-10-04T00:00:00Z
+Preferred-Languages: en
+Canonical: https://gi-ai.app/.well-known/security.txt
+Policy: https://gi-ai.app/security/

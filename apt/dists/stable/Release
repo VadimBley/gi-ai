@@ -1,0 +1,20 @@
+Architectures: amd64
+Codename: stable
+Components: main
+Date: Mon, 05 Oct 2026 13:07:21 +0000
+Description: Ĝi (gi-ai) APT repository
+Label: gi-ai
+Origin: gi-ai
+Suite: stable
+MD5Sum:
+ cc520685409cd9198ff3a758e8a8c17c              916 main/binary-amd64/Packages
+ 3da07620c213d7f34f137c6a48a6c75c              665 main/binary-amd64/Packages.gz
+SHA1:
+ 302e89a164053e72741400cce150348ee12ad482              916 main/binary-amd64/Packages
+ 91781450f28e0e09e58c2ade476ff9dea88bc070              665 main/binary-amd64/Packages.gz
+SHA256:
+ f6951781823bf6b3c2395c1daf94a376483740e6cef5020d047169bffc873279              916 main/binary-amd64/Packages
+ 97b7bde9bf1493f943419a52c70884c61259be4ef14dd05c0c7236f328c2d19a              665 main/binary-amd64/Packages.gz
+SHA512:
+ 658516b49530d3b56ea348e82d0e858d9e7e16fd0dc58bf3cfa4c6262b281f5ea90c96a1ba421e450e7a39951922a06225c5797855a76c375872f074b0dbc974              916 main/binary-amd64/Packages
+ e68124fc2028f32e5191e0dd589151de64f55dc8a688ee3fe35f807f8a0b7fa0d507634109229caaffc2b18d77cec8d91299b3241ce9d359674f5668b31d5ffb              665 main/binary-amd64/Packages.gz

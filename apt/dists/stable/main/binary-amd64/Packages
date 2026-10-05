@@ -1,0 +1,21 @@
+Package: gi-ai
+Architecture: all
+Version: 0.1.0
+Priority: optional
+Section: utils
+Maintainer: Vadim Bley <bugs@gi-ai.app>
+Depends: python3 (>= 3.11)
+Suggests: man-db
+Filename: pool/main/g/gi-ai/gi-ai_0.1.0_all.deb
+Size: 33084
+MD5sum: 056f4ff3b80a13226bc0366db4062956
+SHA1: e0bf98ab12cd1a0a8ad04de62cac93e559e455f8
+SHA256: 767c405a88db62a0c08d97244c6982d999ebf5b2ad4cc9c18e33e0efc1bb0783
+SHA512: 172996e3fe1e6b787d1a12a03b507253558586478e152a9a1fa1468037e3b8a16ea2892f7389cc0d204f9ce5422e8be0667b6d87d35f1a130605e3c80711b419
+Homepage: https://github.com/VadimBley/gi-ai
+Description: Ĝi - a small, private AI assistant that runs on your computer
+ Ĝi answers questions using a language model running locally (for example
+ through Ollama or LM Studio) and keeps a private workspace of task records
+ with a tamper-evident audit log. It sends nothing over the network except to
+ the local model endpoint you configure.
+

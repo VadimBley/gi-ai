@@ -1,0 +1,55 @@
+/* Ĝi website - one stylesheet, no external resources, light/dark from the system setting. */
+:root {
+  --bg: #fbfaf7; --fg: #1d1f24; --muted: #5b616e; --line: #e4e1da;
+  --card: #ffffff; --code-bg: #f2f0ea; --accent: #0f766e; --accent-fg: #ffffff;
+  --radius: 12px; --max: 760px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111317; --fg: #e8e6e1; --muted: #a2a7b3; --line: #2a2e36;
+    --card: #181b21; --code-bg: #1f232b; --accent: #2dd4bf; --accent-fg: #0b1a18;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, "Noto Sans", sans-serif;
+}
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
+header.site { border-bottom: 1px solid var(--line); }
+header.site .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 20px; flex-wrap: wrap; }
+.brand { display: flex; align-items: baseline; gap: 10px; text-decoration: none; color: var(--fg); }
+.brand .mark { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; color: var(--accent); line-height: 1; }
+.brand .name { font-weight: 650; }
+nav.site { display: flex; gap: 18px; flex-wrap: wrap; font-size: 15px; }
+nav.site a { color: var(--muted); text-decoration: none; }
+nav.site a:hover, nav.site a[aria-current="page"] { color: var(--fg); }
+main { padding: 40px 0 56px; }
+h1 { font-size: clamp(30px, 5vw, 44px); line-height: 1.15; letter-spacing: -0.02em; margin: 0 0 14px; }
+h2 { font-size: 23px; margin: 40px 0 10px; letter-spacing: -0.01em; }
+h3 { font-size: 18px; margin: 26px 0 6px; }
+.lead { font-size: 20px; color: var(--muted); margin: 0 0 28px; }
+.hero .mark { font-size: 72px; font-weight: 800; color: var(--accent); line-height: 1; margin-bottom: 10px; display: block; }
+.points { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 28px 0; padding: 0; list-style: none; }
+.points li { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; }
+.points strong { display: block; margin-bottom: 4px; }
+.points span { color: var(--muted); font-size: 15.5px; }
+pre, code { font-family: ui-monospace, "SF Mono", "Cascadia Code", "DejaVu Sans Mono", monospace; font-size: 14.5px; }
+code { background: var(--code-bg); padding: 1px 6px; border-radius: 6px; }
+pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; overflow-x: auto; line-height: 1.5; }
+pre code { background: none; padding: 0; }
+.button { display: inline-block; background: var(--accent); color: var(--accent-fg); text-decoration: none; font-weight: 650; padding: 10px 18px; border-radius: 999px; margin: 4px 10px 4px 0; }
+.button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+.note { border-left: 4px solid var(--accent); background: var(--card); padding: 12px 16px; border-radius: 0 var(--radius) var(--radius) 0; margin: 18px 0; }
+.fp { font-family: ui-monospace, monospace; font-size: 14.5px; word-break: break-all; }
+table { border-collapse: collapse; width: 100%; font-size: 15.5px; }
+th, td { text-align: left; border-bottom: 1px solid var(--line); padding: 8px 6px; vertical-align: top; }
+footer.site { border-top: 1px solid var(--line); color: var(--muted); font-size: 14.5px; }
+footer.site .wrap { display: flex; gap: 18px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 22px 20px; }
+footer.site img { display: block; height: 31px; width: auto; }
+.small { font-size: 14.5px; color: var(--muted); }

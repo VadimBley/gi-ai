@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ĝi – a private AI assistant for Linux</title>
+<meta name="description" content="Ĝi is a small, private AI assistant for Linux that runs on your own computer.">
+<meta name="referrer" content="no-referrer">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="site"><div class="wrap">
+<a class="brand" href="index.html"><span class="mark">Ĝi</span><span class="name">gi-ai</span></a>
+<nav class="site" aria-label="Main"><a href="index.html" aria-current="page">Home</a><a href="install/index.html">Install</a><a href="docs/index.html">Docs</a><a href="security/index.html">Security</a><a href="license/index.html">License</a></nav>
+</div></header>
+<main><div class="wrap">
+
+<section class="hero">
+<span class="mark" aria-hidden="true">Ĝi</span>
+<h1>A private AI assistant that runs on your own computer.</h1>
+<p class="lead">Ĝi (Esperanto for “it”) answers your questions with a language model on your machine.
+No cloud, no account, no telemetry.</p>
+<a class="button" href="install/index.html">Install Ĝi</a><a class="button ghost" href="docs/index.html">Read the docs</a>
+</section>
+<ul class="points">
+<li><strong>Local and private</strong><span>Talks only to the model server you choose (Ollama or LM Studio), on this computer by default.</span></li>
+<li><strong>Installs with apt</strong><span>A signed package for Ubuntu, Linux Mint, Debian and Ubuntu on WSL. Updates arrive with your normal updates.</span></li>
+<li><strong>Checks itself</strong><span><code>gi selfcheck</code> reports your security baseline; answers from the model are always treated as untrusted.</span></li>
+</ul>
+<h2>Quick start</h2>
+<pre><code>sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://gi-ai.app/apt/gi-ai.asc | sudo gpg --dearmor -o /etc/apt/keyrings/gi-ai.gpg
+gpg --show-keys /etc/apt/keyrings/gi-ai.gpg      # compare the fingerprint below
+echo "deb [signed-by=/etc/apt/keyrings/gi-ai.gpg] https://gi-ai.app/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/gi-ai.list
+sudo apt update && sudo apt install gi-ai</code></pre>
+<p>Then connect a model server and ask your first question: see <a href="install/index.html">Install</a>.</p>
+<h2>What you need</h2>
+<p>Ubuntu 24.04 or newer, Linux Mint 22, Debian 12 or newer, or Ubuntu on WSL (Python 3.11+, installed by apt),
+and a local model server: <a href="https://ollama.com">Ollama</a> on the same machine, or
+<a href="https://lmstudio.ai">LM Studio</a> (for example on the Windows host of WSL).</p>
+<h2>Free software</h2>
+<p>Ĝi is free software under the <a href="license/index.html">GNU AGPLv3</a>. The source code is on
+<a href="https://github.com/VadimBley/gi-ai">GitHub</a>.</p>
+
+</div></main>
+<footer class="site"><div class="wrap">
+<span>© 2026 Vadim Bley · <a href="license/index.html">AGPLv3</a> · <a href="privacy/index.html">Privacy</a> · <a href="https://github.com/VadimBley/gi-ai">Source</a></span>
+<a href="https://www.gnu.org/licenses/agpl-3.0.html"><img src="assets/agplv3-155x51.png" alt="GNU AGPLv3 logo" width="94" height="31"></a>
+</div></footer>
+</body>
+</html>
