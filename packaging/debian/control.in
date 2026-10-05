@@ -1,0 +1,14 @@
+Package: gi-ai
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: all
+Depends: python3 (>= 3.11)
+Suggests: man-db
+Maintainer: @MAINTAINER@
+Homepage: https://github.com/@GH_USER@/gi-ai
+Description: Ĝi - a small, private AI assistant that runs on your computer
+ Ĝi answers questions using a language model running locally (for example
+ through Ollama or LM Studio) and keeps a private workspace of task records
+ with a tamper-evident audit log. It sends nothing over the network except to
+ the local model endpoint you configure.

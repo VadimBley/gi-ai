@@ -1,0 +1,26 @@
+#!/usr/bin/python3 -I
+# Copyright (C) 2026 Vadim Bley
+# This file is part of Ĝi (gi-ai).
+#
+# Ĝi is free software: you can redistribute it and/or modify it under the terms of the
+# GNU Affero General Public License as published by the Free Software Foundation, version 3.
+#
+# Ĝi is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
+# the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License along with Ĝi.
+# If not, see <https://www.gnu.org/licenses/>.
+
+"""Launcher installed as /usr/bin/gi-ai (and /usr/bin/gi). Isolated mode (-I):
+ignores PYTHONPATH, user site-packages and the current directory."""
+
+import sys
+from pathlib import Path
+
+LIB = Path(__file__).resolve().parent.parent / "lib" / "gi-ai"
+sys.path.insert(0, str(LIB))
+
+from gi_ai.cli import main  # noqa: E402
+
+sys.exit(main())

@@ -1,0 +1,13 @@
+# Ĝi local task record. Edit freely; keep the field names.
+id = "{{id}}"
+type = "vuln"
+status = "draft"
+priority = "p3"
+title = "{{title}}"
+created = "{{created}}"
+
+[details]
+summary = ""
+affected = []          # e.g. "config file", "file permissions", "stored keys"
+remediation = []       # e.g. "chmod 600 ~/.config/gi-ai/gi.toml"
+evidence = ""          # paste output of: gi selfcheck

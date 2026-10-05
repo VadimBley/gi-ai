@@ -1,0 +1,14 @@
+# Ĝi local task record. Edit freely; keep the field names.
+id = "{{id}}"
+type = "bug"
+status = "draft"
+priority = "p3"
+title = "{{title}}"
+created = "{{created}}"
+
+[details]
+summary = ""
+steps_to_reproduce = []
+expected = ""
+actual = ""
+resolution = ""

@@ -1,0 +1,4 @@
+# Versions listed here (one per line, without the leading "v") are left out of the APT
+# repository. Releases are immutable, so a bad version is yanked here instead of deleting
+# its .deb; then ship a fixed patch release. Example:
+# 0.2.0

@@ -1,0 +1,38 @@
+Ĝi 0.1.0 - first public release
+
+Ĝi is a small, private AI assistant for Linux. It asks a language model that runs on your own
+computer, keeps private task notes and checks its own security baseline. No cloud, no telemetry.
+
+Model servers
+- Ollama (default: http://127.0.0.1:11434, model qwen3:4b).
+- LM Studio 0.4.0 or newer through its native REST API. When LM Studio runs on the Windows host
+  and Ĝi runs in WSL, use the endpoint http://@gateway:1234 together with allow_remote = true;
+  "@gateway" is replaced on every run by the default-route gateway address.
+
+Commands
+- gi health: checks the model server and shows the endpoint that was used.
+- gi ask "...": asks the model; add --verbose to see token counts and speed.
+- gi init-workspace: creates your private workspace (readable only by you).
+- gi task new / gi task list: local task records with a tamper-evident audit log.
+- gi selfcheck: checks the local security baseline.
+- gi --version: version, licence and source address.
+
+Security
+- Model output is treated as untrusted and cleaned before it is shown.
+- Ĝi connects only to the configured model server: proxy settings are ignored and redirects are
+  not followed.
+- An API token is sent only to addresses on this computer or in a private network, and a
+  token_file must live inside ~/.config/gi-ai/.
+
+Install
+- From the signed APT repository at https://gi-ai.app/apt/ (amd64; Ubuntu 24.04 / 26.04,
+  Debian 12 / 13, Linux Mint 22, Ubuntu on WSL). Compare the signing key fingerprint
+  D523 F5BF 268D FD9F CD08 2391 E1B6 1810 1C64 54A0 before you trust it.
+- Every .deb comes with SHA256SUMS, an SPDX SBOM and build-provenance attestations:
+  gh attestation verify gi-ai_0.1.0_all.deb --repo VadimBley/gi-ai
+
+Licence
+- AGPL-3.0-only. Commercial licences on request: license@gi-ai.app.
+
+Report bugs to bugs@gi-ai.app. Report security problems only privately through
+https://github.com/VadimBley/gi-ai/security/advisories/new

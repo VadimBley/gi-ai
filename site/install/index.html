@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install – Ĝi</title>
+<meta name="description" content="How to install Ĝi with apt and connect Ollama or LM Studio.">
+<meta name="referrer" content="no-referrer">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site"><div class="wrap">
+<a class="brand" href="../index.html"><span class="mark">Ĝi</span><span class="name">gi-ai</span></a>
+<nav class="site" aria-label="Main"><a href="../index.html">Home</a><a href="../install/index.html" aria-current="page">Install</a><a href="../docs/index.html">Docs</a><a href="../security/index.html">Security</a><a href="../license/index.html">License</a></nav>
+</div></header>
+<main><div class="wrap">
+
+<h1>Install Ĝi</h1>
+<p class="lead">Five commands, then connect your model server.</p>
+<h2>1. Add the signed package source and install</h2>
+<pre><code>sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://gi-ai.app/apt/gi-ai.asc | sudo gpg --dearmor -o /etc/apt/keyrings/gi-ai.gpg
+gpg --show-keys /etc/apt/keyrings/gi-ai.gpg      # compare the fingerprint below
+echo "deb [signed-by=/etc/apt/keyrings/gi-ai.gpg] https://gi-ai.app/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/gi-ai.list
+sudo apt update && sudo apt install gi-ai</code></pre>
+<div class="note"><strong>Check the key before you trust it.</strong> The fingerprint shown by
+<code>gpg --show-keys</code> must be:<br><span class="fp">D523 F5BF 268D FD9F CD08 2391 E1B6 1810 1C64 54A0</span><br>
+If it differs, stop and don't install.</div>
+<h2>2. Connect a model server</h2>
+<h3>Ollama on the same computer (default)</h3>
+<pre><code>ollama pull qwen3:4b
+gi health</code></pre>
+<h3>LM Studio on the Windows host (Ĝi in WSL)</h3>
+<p>Start the LM Studio server, load a model, and allow its port only from WSL in the Windows firewall. Then create
+<code>~/.config/gi-ai/gi.toml</code>:</p>
+<pre><code>[llm]
+backend = "lmstudio"
+endpoint = "http://@gateway:1234"   # the Windows host as seen from WSL, found on every run
+model = "qwen/qwen3.5-9b"           # the exact model id shown by LM Studio
+allow_remote = true
+timeout_s = 300</code></pre>
+<h2>3. First steps</h2>
+<pre><code>gi health
+gi ask "Explain what a hash-chained audit log is in two sentences."
+gi init-workspace &amp;&amp; gi task new --type req --title "Try Ĝi"
+gi selfcheck</code></pre>
+<h2>Updates and removal</h2>
+<pre><code>sudo apt update &amp;&amp; sudo apt upgrade     # updates arrive with your normal updates
+sudo apt remove gi-ai                      # your workspace in ~/.local/share/gi-ai stays yours</code></pre>
+
+</div></main>
+<footer class="site"><div class="wrap">
+<span>© 2026 Vadim Bley · <a href="../license/index.html">AGPLv3</a> · <a href="../privacy/index.html">Privacy</a> · <a href="https://github.com/VadimBley/gi-ai">Source</a></span>
+<a href="https://www.gnu.org/licenses/agpl-3.0.html"><img src="../assets/agplv3-155x51.png" alt="GNU AGPLv3 logo" width="94" height="31"></a>
+</div></footer>
+</body>
+</html>

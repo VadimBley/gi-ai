@@ -1,0 +1,150 @@
+.\" Copyright (C) 2026 Vadim Bley
+.\" This file is part of Ĝi (gi-ai).
+.\"
+.\" Ĝi is free software: you can redistribute it and/or modify it under the terms of the
+.\" GNU Affero General Public License as published by the Free Software Foundation, version 3.
+.\"
+.\" Ĝi is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
+.\" the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+.\" Affero General Public License for more details.
+.\"
+.\" You should have received a copy of the GNU Affero General Public License along with Ĝi.
+.\" If not, see <https://www.gnu.org/licenses/>.
+.TH GI-AI 1 "2026" "gi-ai 0.1.0" "User Commands"
+.SH NAME
+gi, gi-ai \- Ĝi, a private local AI assistant
+.SH SYNOPSIS
+.B gi
+[\fB\-\-json\fR] [\fB\-\-config\fR \fIFILE\fR] \fICOMMAND\fR ...
+.br
+.B gi ask
+[\fB\-\-verbose\fR] \fIQUESTION\fR
+.br
+.B gi \-\-version
+.SH DESCRIPTION
+Ĝi answers questions with a language model that runs on this computer
+(Ollama or LM Studio) and keeps a private workspace of task records.
+.SH COMMANDS
+.TP
+.B health
+Check Ĝi and the model server. Exit 0 when the server gives a valid reply,
+1 when it does not, 2 on a configuration error. The report shows the endpoint
+that was used. With the lmstudio backend the model counts as available only
+when the server lists \fBllm.model\fR exactly; the report then adds whether it
+is loaded, its capabilities, the server version and the names (never the
+values) of reply fields Ĝi does not know.
+.TP
+.BI "ask " QUESTION
+Ask the model a question. With \fB\-\-verbose\fR, one line with the reply
+statistics (tokens in and out, reasoning tokens, tokens per second, time to
+first token) is printed to standard error after the answer, or
+\fBstats: none\fR when the server sends none. The question is passed to the
+model between two marker lines; marker text inside the question
+(\fB<<<QUESTION\fR or \fBQUESTION>>>\fR, in any letter case) is replaced by
+\fB[marker removed]\fR. The length limit applies to the question as typed.
+.TP
+.B init-workspace \fR[\fB\-\-path\fR \fIDIR\fR]
+Create the private workspace (mode 0700) with a hash-chained audit log.
+.TP
+.B task new \-\-type \fR{req,bug,vuln} \fB\-\-title \fITEXT\fR
+Create a task record. \fBtask list\fR lists them.
+.TP
+.B selfcheck
+Check the local security baseline: private workspace (\fBworkspace-private\fR),
+intact audit log (\fBaudit-chain\fR), config files not world-writable,
+\fBmodel-endpoint-private\fR (the endpoint is loopback, or a private, link-local
+or shared address when \fBllm.allow_remote\fR is true) and, when a token file is
+set, \fBtoken-file-private\fR (owned by you, no group or other permissions).
+.SH CONFIGURATION
+Keys in the \fB[llm]\fR table:
+.TP
+.B backend
+\fBollama\fR (default), \fBlmstudio\fR or \fBecho\fR (offline, repeats the question).
+.TP
+.B endpoint
+\fBhttp://\fIhost\fR[\fB:\fIport\fR] or https; no user, path or query.
+The host \fB@gateway\fR is replaced on every run by the IPv4 default-route
+gateway read from /proc/net/route (for LM Studio on the Windows host of WSL).
+Any host that is not loopback, including \fB@gateway\fR, needs
+\fBallow_remote = true\fR.
+.TP
+.B model\fR, \fBtimeout_s\fR (1-3600), \fBallow_remote
+Model name, request timeout in seconds, and whether a non-local endpoint is allowed.
+.TP
+.B reasoning
+lmstudio only: \fBoff\fR (default), \fBlow\fR, \fBmedium\fR, \fBhigh\fR,
+\fBon\fR, or \fBdefault\fR to send nothing and keep the model's own default.
+.TP
+.B context_length\fR (256-1048576), \fBmax_output_tokens\fR (1-131072), \fBtemperature\fR (0-1)
+lmstudio only; sent only when set.
+.TP
+.B token_file
+a file holding the API token, sent by the lmstudio backend only. It must
+be inside \fI~/.config/gi\-ai/\fR (this place does not follow
+\fBXDG_CONFIG_HOME\fR); any other place is a configuration error and the file
+is not opened. This place is checked whatever the backend, also when
+\fBGI_AI_LLM_TOKEN\fR is set. The file itself must not be a symbolic link, and
+a symbolically linked folder that leads out of \fI~/.config/gi\-ai/\fR is
+refused. When the file is used, it must be owned by you with mode 0600 or
+stricter, or every command stops with a configuration error. A token cannot
+be written in a config file.
+.IP
+A token, from this file or from \fBGI_AI_LLM_TOKEN\fR, is only sent to an
+endpoint whose host is a loopback address or a private, link-local or shared
+address (the addresses \fBmodel-endpoint-private\fR accepts). With a token set
+and any other host (a public address or a name other than \fBlocalhost\fR),
+every command stops with the configuration error
+\fBrefusing to send the API token to\fR \fIhost\fR\fB: not a local or private address\fR
+before any connection is made.
+.SH ENVIRONMENT
+.TP
+.B GI_AI_LLM_TOKEN
+API token for the lmstudio backend. When set and not empty it wins over
+\fBllm.token_file\fR. It is sent only in the Authorization header to the
+configured endpoint and is never printed or stored. The same address rule as
+for \fBllm.token_file\fR applies: with a public address or a host name other
+than \fBlocalhost\fR as the endpoint, every command stops with a configuration
+error.
+.TP
+.B GI_AI_CONFIG
+An extra config file read after the user config.
+.TP
+.B XDG_CONFIG_HOME\fR, \fBXDG_DATA_HOME
+Base directories for the user config and the workspace.
+.SH FILES
+.TP
+.I /etc/gi-ai/gi.toml
+System defaults.
+.TP
+.I ~/.config/gi-ai/gi.toml
+Your settings.
+.TP
+.I ~/.local/share/gi-ai/workspace
+Your private workspace.
+.TP
+.I /proc/net/route
+Read only when the endpoint uses \fB@gateway\fR.
+.TP
+.I llm.token_file
+The API token file you name in the settings, if any (mode 0600, inside
+\fI~/.config/gi\-ai/\fR).
+.SH SECURITY
+Ĝi treats model output as untrusted and removes terminal control sequences
+before printing it, including error texts from the model server. Ĝi never
+reads hidden files or upper-case Markdown files (such as instruction files
+written for other AI tools) as content. Ĝi connects only to the configured
+endpoint: proxy settings are ignored and redirects are not followed. LM Studio
+chats are stateless, Ĝi sends no tools, and a reply that calls a tool is
+refused. Reasoning text from the model is never printed.
+.SH REPORTING BUGS
+Report bugs to \fBbugs@gi\-ai.app\fR.
+Report security problems only through
+.UR https://github.com/VadimBley/gi-ai/security/advisories/new
+.UE ,
+never by email.
+.SH COPYRIGHT
+Copyright (C) 2026 Vadim Bley.
+License AGPL\-3.0\-only: GNU Affero General Public License version 3
+<https://www.gnu.org/licenses/agpl\-3.0.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.

@@ -1,0 +1,136 @@
+# Copyright (C) 2026 Vadim Bley
+# This file is part of Ĝi (gi-ai).
+#
+# Ĝi is free software: you can redistribute it and/or modify it under the terms of the
+# GNU Affero General Public License as published by the Free Software Foundation, version 3.
+#
+# Ĝi is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
+# the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License along with Ĝi.
+# If not, see <https://www.gnu.org/licenses/>.
+
+# Release: started by hand with the version to release.
+#   build   (read-only): .deb (no pip) and SHA256SUMS, hashed before any third-party code runs;
+#           then the SPDX SBOM; the hashes are job outputs
+#   test    (read-only): the package tests against a freshly built .deb
+#   release (environment 'production', the only job with write/OIDC permissions; runs only the
+#           pinned attest actions and gh): checks the downloaded files against the build job's
+#           outputs, attests build provenance and the SBOM, then a draft release, upload, and
+#           publish as pre-release.
+# The APT repository is built and signed offline by the maintainer, not here (no signing secret).
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, equal to __version__ in runtime/gi_ai/__init__.py (e.g. 0.1.0)"
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      deb_sha256: ${{ steps.hashes.outputs.deb_sha256 }}
+      notes_sha256: ${{ steps.hashes.outputs.notes_sha256 }}
+      sbom_sha256: ${{ steps.sbom_hash.outputs.sbom_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false, fetch-depth: 0 }
+      - name: Check the version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version must look like 1.2.3"; exit 1; }
+          code=$(python3 -c 'import re,pathlib;print(re.search(r"__version__ = \"([^\"]+)\"",pathlib.Path("runtime/gi_ai/__init__.py").read_text()).group(1))')
+          [ "$code" = "$VERSION" ] || { echo "runtime says $code, input says $VERSION"; exit 1; }
+          [ -f "release-notes/v$VERSION.txt" ] || { echo "release-notes/v$VERSION.txt is missing"; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+            echo "v$VERSION is already released"; exit 1
+          fi
+      - name: Build the package (no pip, no third-party code)
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          bash tools/build_deb.sh
+          (cd dist && sha256sum "gi-ai_${VERSION}_all.deb" > SHA256SUMS)
+          cp "release-notes/v$VERSION.txt" dist/release-notes.txt
+      # Hashed before any third-party code runs in this job: anything that changes the .deb or the
+      # notes later only makes the release job fail.
+      - id: hashes
+        name: Hash the package and the notes
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          {
+            echo "deb_sha256=$(sha256sum "dist/gi-ai_${VERSION}_all.deb" | cut -d' ' -f1)"
+            echo "notes_sha256=$(sha256sum dist/release-notes.txt | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
+      - uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with: { path: dist, format: spdx-json, output-file: dist/gi-ai.spdx.json, upload-artifact: false }
+      - id: sbom_hash
+        name: Hash the SBOM
+        run: echo "sbom_sha256=$(sha256sum dist/gi-ai.spdx.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with: { name: release, path: dist/, retention-days: 30 }
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false, fetch-depth: 0 }
+      - run: python3 -m pip install pytest
+      - run: make deb
+
+  release:
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with: { name: release, path: dist }
+      - name: Check the files against the build job's hashes
+        env:
+          VERSION: ${{ inputs.version }}
+          DEB_SHA256: ${{ needs.build.outputs.deb_sha256 }}
+          SBOM_SHA256: ${{ needs.build.outputs.sbom_sha256 }}
+          NOTES_SHA256: ${{ needs.build.outputs.notes_sha256 }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          for h in "$DEB_SHA256" "$SBOM_SHA256" "$NOTES_SHA256"; do [[ "$h" =~ ^[0-9a-f]{64}$ ]] || exit 1; done
+          [ "$(cd dist && ls ./*.deb)" = "./gi-ai_${VERSION}_all.deb" ]
+          echo "$DEB_SHA256  dist/gi-ai_${VERSION}_all.deb" | sha256sum --strict -c
+          echo "$SBOM_SHA256  dist/gi-ai.spdx.json" | sha256sum --strict -c
+          echo "$NOTES_SHA256  dist/release-notes.txt" | sha256sum --strict -c
+          echo "$DEB_SHA256  gi-ai_${VERSION}_all.deb" | cmp - dist/SHA256SUMS
+      - name: Build provenance attestation
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with: { subject-path: "dist/gi-ai_*_all.deb" }
+      - name: SBOM attestation
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with: { subject-path: "dist/gi-ai_*_all.deb", sbom-path: dist/gi-ai.spdx.json }
+      - name: Draft, upload, publish as pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          tag="v$VERSION"
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Ĝi $tag" --notes-file dist/release-notes.txt --draft
+          gh release upload "$tag" --repo "$GITHUB_REPOSITORY" \
+            "dist/gi-ai_${VERSION}_all.deb" dist/SHA256SUMS dist/gi-ai.spdx.json
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease

@@ -1,0 +1,47 @@
+# Copyright (C) 2026 Vadim Bley
+# This file is part of Ĝi (gi-ai).
+#
+# Ĝi is free software: you can redistribute it and/or modify it under the terms of the
+# GNU Affero General Public License as published by the Free Software Foundation, version 3.
+#
+# Ĝi is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
+# the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License along with Ĝi.
+# If not, see <https://www.gnu.org/licenses/>.
+
+# Development tooling only. The runtime (runtime/) uses the Python standard library
+# and is packaged as a .deb by tools/build_deb.sh - it is NOT a pip package.
+[project]
+name = "gi-ai-dev"
+license = "AGPL-3.0-only"
+version = "0.0.0"
+requires-python = ">=3.11"
+
+[dependency-groups]
+dev = ["pytest>=9.1.1", "ruff>=0.16.10", "mypy>=2.4.0", "jsonschema>=4.26.0"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "S", "UP", "I", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]   # Ĝ is an intended non-ASCII letter
+
+[tool.ruff.lint.isort]
+known-first-party = ["gi_ai"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S603", "S607", "S108"]
+"tools/**" = ["S603", "S607"]
+"evals/**" = ["S603", "S607"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["runtime/gi_ai"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

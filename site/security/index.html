@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security – Ĝi</title>
+<meta name="description" content="How Ĝi protects your privacy, how to verify downloads and how to report vulnerabilities.">
+<meta name="referrer" content="no-referrer">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="site"><div class="wrap">
+<a class="brand" href="../index.html"><span class="mark">Ĝi</span><span class="name">gi-ai</span></a>
+<nav class="site" aria-label="Main"><a href="../index.html">Home</a><a href="../install/index.html">Install</a><a href="../docs/index.html">Docs</a><a href="../security/index.html" aria-current="page">Security</a><a href="../license/index.html">License</a></nav>
+</div></header>
+<main><div class="wrap">
+
+<h1>Security</h1>
+<p class="lead">Ĝi is designed so that your questions and notes stay on your computer.</p>
+<h2>How Ĝi protects you</h2>
+<ul>
+<li>It connects only to the model server you configure; other computers need an explicit <code>allow_remote = true</code>.</li>
+<li>An API token is sent only to local or private network addresses, never to the internet.</li>
+<li>Proxy settings are ignored and redirects are not followed, so requests can't be diverted.</li>
+<li>Model answers are treated as untrusted: terminal control sequences are removed before printing.</li>
+<li>Ĝi has no tools and can't act on your system; a model reply that tries to call a tool is refused.</li>
+<li>Your workspace is private (mode 0700) and its log is hash-chained, so tampering is detected by <code>gi selfcheck</code>.</li>
+</ul>
+<h2>Verify what you install</h2>
+<ul>
+<li>The package source is signed with the project key <code>Vadim Bley &lt;maintainer@gi-ai.app&gt;</code>.
+Its fingerprint is <span class="fp">D523 F5BF 268D FD9F CD08 2391 E1B6 1810 1C64 54A0</span>.</li>
+<li>Download the key: <a href="https://gi-ai.app/apt/gi-ai.asc">https://gi-ai.app/apt/gi-ai.asc</a>,
+or look it up by its address (Web Key Directory):
+<pre><code>gpg --locate-keys maintainer@gi-ai.app</code></pre>
+Either way, compare the fingerprint above.</li>
+<li>Every release on GitHub has a <code>SHA256SUMS</code> file and a signed build attestation:
+<pre><code>gh attestation verify gi-ai_VERSION_all.deb --repo VadimBley/gi-ai</code></pre></li>
+</ul>
+<h2>Report a vulnerability</h2>
+<p>Please report security problems <strong>privately</strong> through
+<a href="https://github.com/VadimBley/gi-ai/security/advisories/new">GitHub's private vulnerability reporting</a>,
+not by email or in public. See also <a href="../.well-known/security.txt">security.txt</a>.</p>
+<h2>Report a bug</h2>
+<p>Other bugs: <code>bugs@gi-ai.app</code>. Please include your Ĝi version (<code>gi --version</code>) and what you did.</p>
+
+</div></main>
+<footer class="site"><div class="wrap">
+<span>© 2026 Vadim Bley · <a href="../license/index.html">AGPLv3</a> · <a href="../privacy/index.html">Privacy</a> · <a href="https://github.com/VadimBley/gi-ai">Source</a></span>
+<a href="https://www.gnu.org/licenses/agpl-3.0.html"><img src="../assets/agplv3-155x51.png" alt="GNU AGPLv3 logo" width="94" height="31"></a>
+</div></footer>
+</body>
+</html>

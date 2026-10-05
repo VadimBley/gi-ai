@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "version", "status", "llm", "workspace"],
+  "properties": {
+    "name": {"type": "string", "const": "Ĝi"},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "status": {"type": "string", "enum": ["ok", "degraded"]},
+    "llm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backend", "model", "reachable"],
+      "properties": {
+        "backend": {"type": "string", "enum": ["ollama", "lmstudio", "echo"]},
+        "model": {"type": "string", "maxLength": 200},
+        "reachable": {"type": "boolean"},
+        "endpoint": {"type": "string", "maxLength": 300},
+        "loaded": {"type": "boolean"},
+        "server_version": {"type": "string", "maxLength": 64},
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "vision": {"type": "boolean"},
+            "trained_for_tool_use": {"type": "boolean"},
+            "max_context_length": {"type": "integer", "minimum": 0},
+            "reasoning": {"type": "array", "items": {"type": "string", "maxLength": 32}}
+          }
+        },
+        "unknown_fields": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^(top|model|capabilities)\\.([A-Za-z0-9_.-]{1,64}|\\?)$"}
+        }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "exists"],
+      "properties": {
+        "path": {"type": "string"},
+        "exists": {"type": "boolean"}
+      }
+    }
+  }
+}

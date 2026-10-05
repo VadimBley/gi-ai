@@ -1,0 +1,49 @@
+# Copyright (C) 2026 Vadim Bley
+# This file is part of Ĝi (gi-ai).
+#
+# Ĝi is free software: you can redistribute it and/or modify it under the terms of the
+# GNU Affero General Public License as published by the Free Software Foundation, version 3.
+#
+# Ĝi is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even
+# the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License along with Ĝi.
+# If not, see <https://www.gnu.org/licenses/>.
+
+# /etc/gi-ai/gi.toml - system defaults for Ĝi.
+# Per-user overrides: ~/.config/gi-ai/gi.toml (same keys).
+
+[llm]
+backend = "ollama"                    # "ollama", "lmstudio" or "echo" (offline, repeats the question)
+endpoint = "http://127.0.0.1:11434"   # http(s)://host[:port] only; on this computer unless allow_remote = true
+model = "qwen3:4b"                    # any model you pulled with: ollama pull <name>
+timeout_s = 120                       # 1-3600 seconds per request
+allow_remote = false                  # true allows an endpoint on another computer;
+                                      # gi selfcheck fails unless it is a private-network address
+
+# Settings sent to the lmstudio backend only:
+# reasoning = "off"                   # off, low, medium, high, on, or default (send nothing)
+# context_length = 8192               # 256-1048576, sent only when set
+# max_output_tokens = 1024            # 1-131072, sent only when set
+# temperature = 0.7                   # 0-1, sent only when set
+# token_file = "~/.config/gi-ai/lmstudio.token"
+#   File with the LM Studio API token (owned by you, chmod 600). It is checked
+#   whatever the backend; only lmstudio sends it. The environment variable
+#   GI_AI_LLM_TOKEN wins over the file. A token can never be written here.
+
+# Example: LM Studio on the Windows host, used from WSL. Put these lines into
+# ~/.config/gi-ai/gi.toml under [llm] (or replace the matching lines above).
+# "@gateway" is replaced on every run by the default-route gateway address.
+# backend = "lmstudio"
+# endpoint = "http://@gateway:1234"
+# model = "qwen/qwen3.5-9b"
+# allow_remote = true
+# timeout_s = 300
+
+[limits]
+max_input_chars = 8000
+max_output_chars = 16000
+
+[workspace]
+# path = "~/.local/share/gi-ai/workspace"
