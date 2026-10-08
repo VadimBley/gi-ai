@@ -22,6 +22,7 @@ import os
 import re
 import stat
 import sys
+import unicodedata
 from pathlib import Path
 
 from gi_ai import DISPLAY_NAME, __version__, assets, tasks, workspace
@@ -44,6 +45,12 @@ VERSION_TEXT = (
     "There is NO WARRANTY, to the extent permitted by law.\n"
     "Source: https://github.com/VadimBley/gi-ai\n"
 )
+
+
+def normalise_question(question: str) -> str:
+    """NFKC, then without format characters (zero-width spaces, joiners, direction marks)."""
+    text = unicodedata.normalize("NFKC", question)
+    return "".join(c for c in text if unicodedata.category(c) != "Cf")
 
 
 def neutralise_markers(question: str) -> str:
@@ -123,7 +130,10 @@ def cmd_ask(cfg: Config, args: argparse.Namespace) -> int:
     template = assets.load_toml("prompts", "ask.toml")["prompt"]["text"]
     messages = [
         Message("system", system),
-        Message("user", template.replace("{{question}}", neutralise_markers(question))),
+        Message(
+            "user",
+            template.replace("{{question}}", neutralise_markers(normalise_question(question))),
+        ),
     ]
     try:
         reply = make_backend(cfg.llm).chat(messages)
@@ -245,7 +255,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.version:  # an abbreviation such as --vers next to a command
         return _version_usage_error()
     try:
-        cfg = load(Path(args.config) if args.config else None)
+        # The selfcheck reports a cloud metadata endpoint instead of stopping at it.
+        cfg = load(
+            Path(args.config) if args.config else None,
+            refuse_metadata=args.cmd != "selfcheck",
+        )
     except ConfigError as exc:
         print(f"gi: configuration error: {exc}", file=sys.stderr)
         return EXIT_USAGE

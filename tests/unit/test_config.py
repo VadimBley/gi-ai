@@ -269,7 +269,7 @@ def _bad_token_file(cli, capsys, gi_config, path):
     with pytest.raises(config.ConfigError) as info:
         config.load()
     text = str(info.value)
-    assert "llm.token_file" in text
+    assert "token_file" in text  # 1.4.0 B15 message: "token_file must be a regular file ..."
     assert LEAK_MARK not in text and LEAK_MARK not in repr(info.value)
     assert cli("health") == 2
     out, err = capsys.readouterr()
@@ -702,7 +702,8 @@ def test_at18_token_destination_ok_names_the_host(endpoint, host):
 
 # --- AT-19: token_file location (B15) ---------------------------------------------------
 
-LOCATION_TEXT = "llm.token_file must be inside ~/.config/gi-ai/"
+# SPEC-0001 1.4.0 B15: one message for every location / link / file-type refusal.
+LOCATION_TEXT = "token_file must be a regular file inside ~/.config/gi-ai/ reached without links"
 OUTSIDE_PATH = "~/secret.txt"
 UNICODE_PATH = "~/.config/gi-ai/Ĝi.token"
 SUBDIR_PATH = "~/.config/gi-ai/tokens/lm.token"
@@ -895,3 +896,199 @@ def _write_llm(path, keys):
     lines = ["[llm]"] + [f'{k} = "{v}"' for k, v in keys.items()]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     path.chmod(0o600)
+
+
+# --- AT-25 / AT-26: token_file opened component by component (SPEC-0001 1.4.0 B15) ----------
+
+DECOY_MARK = "tok-" + "ĜDECOY-6a2f"
+LM_PATH = "~/.config/gi-ai/lm.token"
+
+
+def _token_refused(cli, capsys, gi_config, raw=LM_PATH, *, endpoint="http://127.0.0.1:1234"):
+    gi_config(backend="lmstudio", endpoint=endpoint, token_file=raw)
+    with pytest.raises(config.ConfigError) as info:
+        config.load()
+    assert str(info.value) == LOCATION_TEXT
+    for argv in (("ask", "x"), ("health",)):
+        assert cli(*argv) == 2, argv
+        out, err = capsys.readouterr()
+        assert f"gi: configuration error: {LOCATION_TEXT}" in err
+        for mark in (LEAK_MARK, DECOY_MARK):
+            assert mark not in out and mark not in err
+
+
+def _move_and_link(real, moved):
+    """Move the folder `real` to `moved` and leave a symbolic link to it in its place."""
+    os.rename(real, moved)
+    os.symlink(moved, real, target_is_directory=True)
+
+
+def test_at25_symlinked_dot_config_is_refused(cli, capsys, gi_config, gi_env, tmp_path):
+    _private_file(gi_env / ".config" / "gi-ai" / "lm.token")
+    _move_and_link(gi_env / ".config", tmp_path / "real-config")
+    _token_refused(cli, capsys, gi_config)
+
+
+def test_at25_symlinked_gi_ai_folder_is_refused(cli, capsys, gi_config, gi_env, tmp_path):
+    _private_file(gi_env / ".config" / "gi-ai" / "lm.token")
+    _move_and_link(gi_env / ".config" / "gi-ai", tmp_path / "real-gi-ai")
+    _token_refused(cli, capsys, gi_config)
+
+
+def test_at25_symlinked_subfolder_inside_is_refused(cli, capsys, gi_config, gi_env, tmp_path):
+    _private_file(tmp_path / "elsewhere" / "lm.token")
+    (gi_env / ".config" / "gi-ai" / "tokens").symlink_to(
+        tmp_path / "elsewhere", target_is_directory=True
+    )
+    _token_refused(cli, capsys, gi_config, "~/.config/gi-ai/tokens/lm.token")
+
+
+@pytest.mark.parametrize("where", ["inside", "outside"])
+def test_at25_symlinked_file_is_refused(cli, capsys, gi_config, gi_env, tmp_path, where):
+    folder = gi_env / ".config" / "gi-ai" if where == "inside" else tmp_path
+    target = _private_file(folder / "real.token", f"{DECOY_MARK}\n")
+    (gi_env / ".config" / "gi-ai" / "lm.token").symlink_to(target)
+    _token_refused(cli, capsys, gi_config)
+
+
+@pytest.mark.parametrize("where", ["outside", "inside"])
+def test_at25_hard_link_is_refused(cli, capsys, gi_config, gi_env, tmp_path, where):
+    folder = tmp_path if where == "outside" else gi_env / ".config" / "gi-ai"
+    target = _private_file(folder / "other.token", f"{DECOY_MARK}\n")
+    os.link(target, gi_env / ".config" / "gi-ai" / "lm.token")
+    assert os.stat(target).st_nlink == 2
+    _token_refused(cli, capsys, gi_config)
+
+
+def test_at25_directory_is_refused(cli, capsys, gi_config, gi_env):
+    (gi_env / ".config" / "gi-ai" / "lm.token").mkdir(mode=0o700)
+    _token_refused(cli, capsys, gi_config)
+
+
+def test_at25_fifo_is_refused_without_hanging(cli, capsys, gi_config, gi_env):
+    fifo = gi_env / ".config" / "gi-ai" / "lm.token"
+    os.mkfifo(fifo, 0o600)
+    _token_refused(cli, capsys, gi_config)
+
+
+@pytest.mark.parametrize("raw", [LM_PATH, "{home}/.config/gi-ai/lm.token"], ids=["tilde", "abs"])
+def test_at25_single_link_regular_file_is_used(gi_config, gi_env, raw):
+    path = _private_file(gi_env / ".config" / "gi-ai" / "lm.token")
+    assert os.stat(path).st_nlink == 1
+    gi_config(backend="lmstudio", token_file=raw.format(home=gi_env))
+    assert config.load().llm.token == LEAK_MARK
+
+
+def test_at25_home_itself_may_be_reached_through_a_link(gi_config, gi_env, tmp_path, monkeypatch):
+    # The walk starts AT the home directory; links above it (e.g. /home -> /data/home) are fine.
+    link = tmp_path / "home-link"
+    link.symlink_to(gi_env, target_is_directory=True)
+    monkeypatch.setenv("HOME", str(link))
+    _private_file(gi_env / ".config" / "gi-ai" / "lm.token")
+    gi_config(backend="lmstudio", token_file=LM_PATH)
+    assert config.load().llm.token == LEAK_MARK
+
+
+def test_at25_env_token_unaffected_by_a_symlinked_config_folder(
+    cli, capsys, monkeypatch, gi_config, gi_env, tmp_path
+):
+    _private_file(gi_env / ".config" / "gi-ai" / "lm.token")
+    _move_and_link(gi_env / ".config", tmp_path / "real-config")
+    monkeypatch.setenv("GI_AI_LLM_TOKEN", ENV_VALUES[0])
+    gi_config(backend="lmstudio", endpoint="http://127.0.0.1:1234", token_file=LM_PATH)
+    assert config.load().llm.token == ENV_VALUES[0]
+
+
+@pytest.fixture
+def os_open_calls(monkeypatch):
+    """Record (path, flags, dir_fd) of every os.open the config module makes."""
+    calls: list[tuple[str, int, int | None]] = []
+    real = os.open
+
+    def spy(path, flags, mode=0o777, *, dir_fd=None):
+        calls.append((os.fsdecode(path), flags, dir_fd))
+        return real(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(config.os, "open", spy)
+    return calls
+
+
+@pytest.mark.parametrize(
+    "raw,parts",
+    [
+        (LM_PATH, [".config", "gi-ai", "lm.token"]),
+        ("~/.config/gi-ai/tokens/lm.token", [".config", "gi-ai", "tokens", "lm.token"]),
+    ],
+)
+def test_at25_open_walks_one_component_at_a_time(gi_config, gi_env, os_open_calls, raw, parts):
+    sub = gi_env / ".config" / "gi-ai" / "tokens"
+    sub.mkdir(mode=0o700)
+    _private_file(gi_env / ".config" / "gi-ai" / "lm.token")
+    _private_file(sub / "lm.token")
+    gi_config(backend="lmstudio", token_file=raw)
+    os_open_calls.clear()
+    assert config.load().llm.token == LEAK_MARK
+    home_call, *rest = os_open_calls
+    assert os.path.realpath(home_call[0]) == os.path.realpath(gi_env)
+    assert home_call[1] & os.O_DIRECTORY
+    assert [c[0] for c in rest] == parts, "each component on its own, relative"
+    for name, flags, dir_fd in rest:
+        assert dir_fd is not None, name
+        assert flags & os.O_NOFOLLOW, name
+        assert not flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT), name
+    for name, flags, _ in rest[:-1]:
+        assert flags & os.O_DIRECTORY, name
+    assert not rest[-1][1] & os.O_DIRECTORY
+
+
+def _swap_on(monkeypatch, gi_env, tmp_path, *, when):
+    """AT-26 test hook: replace ~/.config/gi-ai by a link to a decoy folder mid-walk.
+
+    `when(path, dir_fd)` decides at which os.open call (before it runs) the swap happens.
+    """
+    decoy = tmp_path / "decoy"
+    _private_file(decoy / "lm.token", f"{DECOY_MARK}\n")
+    real = os.open
+    done: list[bool] = []
+
+    def hook(path, flags, mode=0o777, *, dir_fd=None):
+        if not done and when(os.fsdecode(path), dir_fd):
+            done.append(True)
+            folder = gi_env / ".config" / "gi-ai"
+            os.rename(folder, tmp_path / "gi-ai-moved")
+            os.symlink(decoy, folder, target_is_directory=True)
+        return real(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(config.os, "open", hook)
+    return done
+
+
+def test_at26_swap_before_the_walk_reaches_the_folder_is_refused(
+    gi_config, gi_env, tmp_path, monkeypatch
+):
+    _private_file(gi_env / ".config" / "gi-ai" / "lm.token")
+    gi_config(backend="lmstudio", endpoint="http://127.0.0.1:1234", token_file=LM_PATH)
+    # swap at the very first open of the token walk, i.e. after the location was checked
+    done = _swap_on(monkeypatch, gi_env, tmp_path, when=lambda path, dir_fd: True)
+    with pytest.raises(config.ConfigError) as info:
+        config.load()
+    assert done, "the hook ran"
+    assert str(info.value) == LOCATION_TEXT
+    assert DECOY_MARK not in str(info.value)
+
+
+def test_at26_swap_right_before_the_file_open_never_reads_the_decoy(
+    gi_config, gi_env, tmp_path, monkeypatch
+):
+    _private_file(gi_env / ".config" / "gi-ai" / "lm.token")
+    gi_config(backend="lmstudio", endpoint="http://127.0.0.1:1234", token_file=LM_PATH)
+    done = _swap_on(
+        monkeypatch,
+        gi_env,
+        tmp_path,
+        when=lambda path, dir_fd: os.path.basename(path) == "lm.token",
+    )
+    token = config.load().llm.token
+    assert done, "the hook ran"
+    # The walk holds the original folder open: the file checked is the file read, never the decoy.
+    assert token == LEAK_MARK

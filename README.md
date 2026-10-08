@@ -77,7 +77,9 @@ timeout_s = 300
 
 If LM Studio requires an API token, set `GI_AI_LLM_TOKEN` or put the token in a file that only
 you can read (`chmod 600`) inside `~/.config/gi-ai/` and set
-`token_file = "~/.config/gi-ai/lmstudio.token"`. Ĝi sends the token only to addresses on this
+`token_file = "~/.config/gi-ai/lmstudio.token"`. The file must be a regular file reached without
+links: no symbolic link on the way (not `~/.config`, not `~/.config/gi-ai`, not the file) and no hard
+link to it; if your config folder is a symbolic link, use `GI_AI_LLM_TOKEN`. Ĝi sends the token only to addresses on this
 computer or in a private network, and never prints or stores it.
 
 ## First commands

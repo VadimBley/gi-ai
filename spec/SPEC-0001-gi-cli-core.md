@@ -1,7 +1,7 @@
 ---
 id: SPEC-0001
 title: Ĝi CLI core (health, ask, workspace, tasks, selfcheck)
-version: 1.3.0
+version: 1.4.0
 status: approved
 intent: INT-0001
 visibility: public
@@ -10,6 +10,10 @@ owner: VadimBley
 ---
 
 # SPEC-0001: Ĝi CLI core
+
+Changes in 1.4.0 (INT-0005): cloud metadata addresses are refused as endpoints (B6, B7, B15); `llm.token_file` is
+opened component by component without symbolic links and must have exactly one link (B15); questions are normalised
+(NFKC, format characters removed) before marker neutralising (B17). AT-24..AT-27.
 
 Changes in 1.3.0 (INT-0004, ADR-0005): `gi --version` with the licence notice (B18); licence, notices and
 contacts in the package and man page (B19). AT-22, AT-23.
@@ -43,8 +47,9 @@ and `gi selfcheck` check `model-endpoint-private` (replaces "model endpoint loca
    **`token-file-private`**. Exit 1 if any check fails.
    - `model-endpoint-private` passes when the resolved endpoint host is loopback (detail `loopback`), or when
      `llm.allow_remote = true` and the host is a private, link-local or shared (CGNAT) IPv4/IPv6 address (detail
-     `private network <ip>`). It fails for any other address (detail `PUBLIC <ip>`) and for a host name that isn't an IP
-     literal, `localhost` or `@gateway` (detail `unresolved name <host>`).
+     `private network <ip>`). It fails for any other address (detail `PUBLIC <ip>`), for a cloud metadata address (behaviour 7,
+     detail `METADATA <ip>`, even with `allow_remote`) and for a host name that isn't an IP literal, `localhost` or
+     `@gateway` (detail `unresolved name <host>`).
    - `token-file-private` passes when `llm.token_file` is owned by the user and its mode has no group/other bits
      (detail shows the octal mode, never the content).
 7. Configuration: `/etc/gi-ai/gi.toml` < `~/.config/gi-ai/gi.toml` < `$GI_AI_CONFIG` < `--config`. Unknown keys are
@@ -52,7 +57,9 @@ and `gi selfcheck` check `model-endpoint-private` (replaces "model endpoint loca
    - `backend`: `ollama` (default) | `lmstudio` | `echo`.
    - `endpoint`: `http(s)://host[:port]`. The host may be the placeholder **`@gateway`**, replaced at every run by the
      IPv4 default-route gateway (behaviour 14). A non-loopback host, including `@gateway`, is refused unless
-     `llm.allow_remote = true`.
+     `llm.allow_remote = true`. **Cloud metadata addresses are always refused**, whatever `allow_remote` says:
+     `169.254.169.254`, `169.254.170.2` and `fd00:ec2::254` (also when `@gateway` resolves to one of them). The command
+     exits 2 with `refusing the endpoint <ip>: a cloud metadata address` before any network call.
    - `model`, `timeout_s` (1-3600), `allow_remote` (default false): unchanged.
    - `reasoning`: `off` (default) | `low` | `medium` | `high` | `on` | `default`. Used by `lmstudio` only; `default` means
      the member is not sent and the model's own default applies (for models that reject the member).
@@ -95,10 +102,16 @@ and `gi selfcheck` check `model-endpoint-private` (replaces "model endpoint loca
 15. API token: if the environment variable `GI_AI_LLM_TOKEN` is set and non-empty, it is the token; otherwise, if
     `llm.token_file` is set, the token is the file's content with surrounding whitespace removed. A token file that is
     missing, empty, not owned by the user, or readable/writable by group or others is a config error (exit 2) and the
-    token is not used. `llm.token_file` must resolve (after `~` expansion, without following symbolic links) to a file
-    inside `~/.config/gi-ai/`; any other location is a config error (exit 2) and the file is not opened.
+    token is not used. `llm.token_file` must name a file inside `~/.config/gi-ai/` (after `~` expansion). Ĝi opens it **one path component
+    at a time, starting at the home directory**, refusing a symbolic link in any component (including `.config`,
+    `gi-ai` and the file itself), so that the file checked is the file read (no gap between check and open). The opened
+    file must be a regular file with **exactly one hard link**. Any other case (another location, a symbolic link
+    anywhere on the path, a hard link count above 1, not a regular file) is a config error (exit 2) with
+    `token_file must be a regular file inside ~/.config/gi-ai/ reached without links`, and no token is read.
+    `GI_AI_LLM_TOKEN` is unaffected (for setups whose config folder is a symbolic link).
     **Destination rule:** a token is sent only when the resolved endpoint host is a loopback address or a private,
-    link-local or shared (CGNAT) IP address (the same address classes that pass `model-endpoint-private`, behaviour 6),
+    link-local or shared (CGNAT) IP address (the same address classes that pass `model-endpoint-private`, behaviour 6;
+    cloud metadata addresses never get that far, behaviour 7),
     over http or https. If a token is configured and the endpoint host is anything else (a public IP or a DNS name other
     than `localhost`), the command exits 2 with `refusing to send the API token to <host>: not a local or private address`
     before any network call. The token is sent only to the configured endpoint, only in the `Authorization` header, and
@@ -107,9 +120,12 @@ and `gi selfcheck` check `model-endpoint-private` (replaces "model endpoint loca
     present (`lmstudio`: `stats.input_tokens`, `stats.total_output_tokens`, `stats.reasoning_output_tokens`,
     `stats.tokens_per_second`, `stats.time_to_first_token_seconds`), e.g. `stats: in=42 out=118 tok/s=21.4 ttft=0.31s`.
     Non-numeric values are skipped. For other backends it prints `stats: none`.
-17. Question neutralising: before wrapping (behaviour 2), every occurrence of the marker strings `<<<QUESTION` and
-    `QUESTION>>>`, matched without regard to letter case, is replaced by `[marker removed]`. The rest of the question
-    is unchanged and the length check (behaviour 2) applies to the original question. The ask prompt asset's version is
+17. Question neutralising: before wrapping (behaviour 2), the question is **normalised**: Unicode NFKC, then every
+    character of general category `Cf` (format characters such as zero-width spaces and joiners) is removed. In the
+    normalised text, every occurrence of the marker strings `<<<QUESTION` and `QUESTION>>>`, matched without regard to
+    letter case, is replaced by `[marker removed]`. The model receives the normalised, neutralised text (emoji joined
+    by zero-width joiners may appear as separate emoji). Look-alike letters from other scripts (homoglyphs) are not
+    mapped (residual risk, section 6). The length check (behaviour 2) applies to the question as typed. The ask prompt asset's version is
     bumped with this change.
 
 18. `gi --version` (also `gi-ai --version`) prints exactly these lines to standard output and exits 0, without reading
@@ -258,7 +274,7 @@ stateDiagram-v2
 ## 6. Security & privacy (OWASP LLM Top 10 2025)
 | Risk | Applies? | Control |
 |---|---|---|
-| LLM01 Prompt injection | yes | System prompt says user/tool text is data; question neutralised (B17) and wrapped in markers; Ĝi has no tools; tool calls in a reply are rejected (B11) |
+| LLM01 Prompt injection | yes | System prompt says user/tool text is data; question normalised (NFKC, format characters removed) and neutralised (B17) and wrapped in markers; residual: homoglyphs from other scripts; Ĝi has no tools; tool calls in a reply are rejected (B11) |
 | LLM02 Sensitive information disclosure | yes | Loopback by default; remote only with `allow_remote` and checked as private (B6); `store: false` so LM Studio keeps no conversation (B9); token never printed/logged and sent only to local/private addresses (B15); workspace 0700, files 0600 |
 | LLM03 Supply chain | yes | Ĝi pins the model id it asks for and reports `available`/`loaded` honestly (B12); model integrity is checked outside Ĝi (ADR-0002 digest) |
 | LLM05 Improper output handling | yes | Output and server error text sanitised before printing (B3, B10); reasoning never printed (B11) |
@@ -308,6 +324,18 @@ stateDiagram-v2
 - [ ] AT-23 the built `.deb` contains `usr/share/doc/gi-ai/copyright` with `License: AGPL-3.0-only` and the licence text;
       every Python file, the launcher and the man page carry the B19 notice; the man page names `bugs@gi-ai.app` and the
       advisories URL; the isolation gate stays clean.
+- [ ] AT-24 endpoints `http://169.254.169.254`, `http://169.254.170.2:80`, `http://[fd00:ec2::254]` with
+      `allow_remote = true` → exit 2 with the B7 message and no socket opened, with and without a token; `@gateway`
+      resolving (fixture route table) to 169.254.169.254 → exit 2; selfcheck shows `METADATA <ip>` FAIL;
+      169.254.1.1 and fe80::1 still pass.
+- [ ] AT-25 token_file refused (exit 2, B15 message, file never read) when `~/.config` or `~/.config/gi-ai` is a symbolic
+      link, when the file is a symbolic link, when it is a hard link (link count 2) to a 0600 file elsewhere, and when it
+      is a directory or FIFO; a single-link 0600 regular file in a real `~/.config/gi-ai/` is used.
+- [ ] AT-26 the open is component-wise: replacing `~/.config/gi-ai` by a symbolic link between path resolution and open
+      (test hook) never makes Ĝi read the other file.
+- [ ] AT-27 questions with fullwidth `ＱＵＥＳＴＩＯＮ＞＞＞`, `QUES\u200bTION>>>` and `<<<\u2060QUESTION` reach the model with
+      `[marker removed]` and exactly one pair of real markers; a question over the limit only after normalisation is
+      not refused; the Ĝi eval set gets a case; the ask prompt asset version is bumped.
 
 ## 8. Open questions
 None.

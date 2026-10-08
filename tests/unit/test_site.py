@@ -86,3 +86,20 @@ def test_security_page_key_lookup():
     assert "https://gi-ai.app/apt/gi-ai.asc" in text
     assert "gpg --locate-keys maintainer@gi-ai.app" in text
     assert FINGERPRINT in text
+
+
+def _plain(rel: str) -> str:
+    html = (SITE / rel / "index.html").read_text(encoding="utf-8")
+    return " ".join(re.sub(r"<[^>]+>", " ", html).split())
+
+
+def test_docs_page_states_the_1_4_rules():
+    # SPEC-0001 1.4.0: where the docs page states the endpoint and token_file rules, it is current.
+    text = _plain("docs")
+    assert "169.254.169.254" in text and "metadata" in text
+    assert "without links" in text or "symbolic link" in text
+
+
+def test_security_page_states_the_metadata_refusal():
+    text = _plain("security")
+    assert "metadata" in text

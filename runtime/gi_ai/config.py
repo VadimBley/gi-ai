@@ -38,6 +38,7 @@ REASONING_LEVELS = ("off", "low", "medium", "high", "on", "default")
 MAX_ENDPOINT_CHARS = 300
 MAX_MODEL_CHARS = 200
 MAX_TOKEN_FILE_BYTES = 65536
+FILE_PLACE_RULE = "token_file must be a regular file inside ~/.config/gi-ai/ reached without links"
 
 # scheme://host[:port][/] and nothing else: no user info, path, query or fragment.
 _ENDPOINT_RE = re.compile(
@@ -58,6 +59,21 @@ _PRIVATE_NETWORKS = tuple(
         "fe80::/10",
     )
 )
+
+
+# Cloud metadata services: never an endpoint, whatever llm.allow_remote says.
+METADATA_ADDRESSES = frozenset(
+    {
+        ipaddress.ip_address("169.254.169.254"),
+        ipaddress.ip_address("169.254.170.2"),
+        ipaddress.ip_address("fd00:ec2::254"),
+    }
+)
+# IPv6 forms that carry an IPv4 address in their last 32 bits (NAT64, IPv4-compatible).
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+_IPV4_COMPATIBLE = ipaddress.ip_network("::/96")
+# Spellings the C library also reads as an IPv4 address: 2852039166, 0xa9fea9fe, 0251.0376.0.1
+_LEGACY_IPV4_RE = re.compile(r"[0-9A-Fa-fXx.]+")
 
 
 def user_config_path() -> Path:
@@ -155,10 +171,19 @@ def _check_endpoint(endpoint: str) -> str:
 
 
 def _ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """The address a host literal names, read the way the C library reads it, or None.
+
+    A host ending in "." is a name: the C library looks it up instead of reading it.
+    """
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
-        return None
+        if not _LEGACY_IPV4_RE.fullmatch(host):
+            return None
+        try:
+            return ipaddress.IPv4Address(socket.inet_aton(host))  # parses only, no lookup
+        except OSError:
+            return None
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
         return ip.ipv4_mapped
     return ip
@@ -169,6 +194,21 @@ def _is_loopback(host: str) -> bool:
         return True
     ip = _ip(host)
     return ip is not None and ip.is_loopback
+
+
+def metadata_address(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """The cloud metadata address a host literal reaches, or None."""
+    # "169.254.169.254." is looked up as a name, which may well answer with that address.
+    ip = _ip(host[:-1] if host.endswith(".") else host)
+    if ip is None:
+        return None
+    candidates = [ip]
+    if isinstance(ip, ipaddress.IPv6Address) and (ip in _NAT64 or ip in _IPV4_COMPATIBLE):
+        candidates.append(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
+    for candidate in candidates:
+        if candidate in METADATA_ADDRESSES:
+            return candidate
+    return None
 
 
 def default_gateway(route_file: Path) -> str:
@@ -203,6 +243,9 @@ def endpoint_privacy(endpoint: str, allow_remote: bool) -> tuple[bool, str]:
             host = default_gateway(ROUTE_FILE)
         except ConfigError:
             return False, f"unresolved name {GATEWAY_HOST}"
+    metadata = metadata_address(host)
+    if metadata is not None:
+        return False, f"METADATA {metadata}"
     if _is_loopback(host):
         return True, "loopback"
     ip = _ip(host)
@@ -230,39 +273,51 @@ def token_dir() -> Path:
     return Path.home() / ".config" / "gi-ai"
 
 
-def _check_token_file_location(raw_path: str) -> None:
-    """The token file must be inside token_dir(); checked before the file is opened."""
+def _token_parts(raw_path: str) -> list[str]:
+    """The path below the home directory, one name per component; only inside token_dir()."""
+    home = os.path.abspath(Path.home())
     base = os.path.abspath(token_dir())
-    # Lexical first: no symlink is followed, ".." is collapsed.
+    # Lexical: no symbolic link is followed, ".." is collapsed.
     path = os.path.abspath(os.path.expanduser(raw_path))
-    inside = path != base and os.path.commonpath([base, path]) == base
-    if inside:
-        # A symlinked directory on the way must not lead out of it.
-        real_base = os.path.realpath(base)
-        parent = os.path.realpath(os.path.dirname(path))
-        inside = os.path.commonpath([real_base, parent]) == real_base
-    if not inside:
-        raise ConfigError("llm.token_file must be inside ~/.config/gi-ai/")
+    if path == base or os.path.commonpath([base, path]) != base:
+        raise ConfigError(FILE_PLACE_RULE)
+    return os.path.relpath(path, home).split(os.sep)
+
+
+def _open_token_file(raw_path: str, where: str) -> int:
+    """Open the token file one component at a time from the home directory, no links."""
+    parts = _token_parts(raw_path)
+    cloexec = getattr(os, "O_CLOEXEC", 0)
+    folder_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | cloexec
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | cloexec
+    try:
+        fd = os.open(Path.home(), os.O_RDONLY | os.O_DIRECTORY | cloexec)
+    except OSError:
+        raise ConfigError(f"{where} cannot be opened") from None
+    try:
+        for name in parts[:-1]:
+            inner = os.open(name, folder_flags, dir_fd=fd)
+            os.close(fd)
+            fd = inner
+        return os.open(parts[-1], file_flags, dir_fd=fd)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise ConfigError(FILE_PLACE_RULE) from None
+        reason = "does not exist" if exc.errno == errno.ENOENT else "cannot be opened"
+        raise ConfigError(f"{where} {reason}") from None
+    finally:
+        os.close(fd)
 
 
 def _read_token_file(raw_path: str) -> str:
     path = os.path.expanduser(raw_path)
     where = f"llm.token_file {path}"
-    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
-    try:
-        fd = os.open(path, flags)
-    except OSError as exc:
-        if exc.errno == errno.ELOOP:
-            reason = "is a symbolic link"
-        elif exc.errno == errno.ENOENT:
-            reason = "does not exist"
-        else:
-            reason = "cannot be opened"
-        raise ConfigError(f"{where} {reason}") from None
+    fd = _open_token_file(raw_path, where)
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode):
-            raise ConfigError(f"{where} is not a regular file")
+        # The file checked is the file read: one regular file, one name.
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise ConfigError(FILE_PLACE_RULE)
         mode = stat.S_IMODE(info.st_mode)
         if info.st_uid != os.geteuid():
             raise ConfigError(f"{where} is not owned by you")
@@ -354,7 +409,7 @@ def _check_range(name: str, value: int | float | None, low: float, high: float) 
         raise ConfigError(f"{name} must be between {low} and {high}")
 
 
-def _build_llm(llm_raw: dict[str, Any]) -> LLMConfig:
+def _build_llm(llm_raw: dict[str, Any], refuse_metadata: bool = True) -> LLMConfig:
     _check_types(llm_raw)
     llm = LLMConfig(**llm_raw)
     if llm.backend not in BACKENDS:
@@ -370,19 +425,33 @@ def _build_llm(llm_raw: dict[str, Any]) -> LLMConfig:
     if llm.token_file is not None:
         if not llm.token_file:
             raise ConfigError("llm.token_file must not be empty")
-        _check_token_file_location(llm.token_file)
+        _token_parts(llm.token_file)
 
     host = _check_endpoint(llm.endpoint)
-    if not llm.allow_remote and (host == GATEWAY_HOST or not _is_loopback(host)):
-        raise ConfigError(
-            "llm.endpoint is not on this computer; set llm.allow_remote = true to allow it"
-        )
+    not_local = ConfigError(
+        "llm.endpoint is not on this computer; set llm.allow_remote = true to allow it"
+    )
     endpoint = llm.endpoint
+    resolved = host
     if host == GATEWAY_HOST:
         # Resolved for this run only; never written back.
-        endpoint = endpoint.replace(GATEWAY_HOST, default_gateway(ROUTE_FILE), 1)
+        try:
+            resolved = default_gateway(ROUTE_FILE)
+        except ConfigError:
+            if not llm.allow_remote:
+                raise not_local from None
+            raise
+        endpoint = endpoint.replace(GATEWAY_HOST, resolved, 1)
         if len(endpoint) > MAX_ENDPOINT_CHARS:
             raise ConfigError(f"llm.endpoint is longer than {MAX_ENDPOINT_CHARS} characters")
+    metadata = metadata_address(resolved)
+    if metadata is not None:
+        if refuse_metadata:
+            raise ConfigError(f"refusing the endpoint {metadata}: a cloud metadata address")
+        # Only the selfcheck gets here: it reports the address and sends nothing.
+        return replace(llm, endpoint=endpoint, token=None)
+    if not llm.allow_remote and (host == GATEWAY_HOST or not _is_loopback(host)):
+        raise not_local
     token = _resolve_token(llm.token_file)
     if token is not None:
         ok, dest = token_destination_ok(endpoint)
@@ -405,7 +474,7 @@ def _build_limits(lim_raw: dict[str, Any]) -> LimitsConfig:
     return limits
 
 
-def _build(raw: dict[str, Any], sources: list[str]) -> Config:
+def _build(raw: dict[str, Any], sources: list[str], refuse_metadata: bool = True) -> Config:
     extra_top = set(raw) - {"llm", "limits", "workspace"}
     if extra_top:
         raise ConfigError(f"unknown sections: {sorted(extra_top)}")
@@ -421,7 +490,7 @@ def _build(raw: dict[str, Any], sources: list[str]) -> Config:
     if not isinstance(ws_raw, dict):
         raise ConfigError("[workspace] must be a table")
 
-    llm = _build_llm(llm_raw)
+    llm = _build_llm(llm_raw, refuse_metadata)
     limits = _build_limits(lim_raw)
 
     ws_value = ws_raw.get("path")
@@ -429,7 +498,8 @@ def _build(raw: dict[str, Any], sources: list[str]) -> Config:
     return Config(llm=llm, limits=limits, workspace=workspace, sources=tuple(sources))
 
 
-def load(extra_path: Path | None = None) -> Config:
+def load(extra_path: Path | None = None, *, refuse_metadata: bool = True) -> Config:
+    """Load the configuration. refuse_metadata=False lets the selfcheck report such an endpoint."""
     candidates = [SYSTEM_CONFIG, user_config_path()]
     env_path = os.environ.get("GI_AI_CONFIG")
     if env_path:
@@ -447,4 +517,4 @@ def load(extra_path: Path | None = None) -> Config:
                 except tomllib.TOMLDecodeError as exc:
                     raise ConfigError(f"{path}: {exc}") from exc
             used.append(str(path))
-    return _build(merged, used)
+    return _build(merged, used, refuse_metadata)
