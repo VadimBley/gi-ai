@@ -1,20 +1,20 @@
 Architectures: amd64
 Codename: stable
 Components: main
-Date: Thu, 08 Oct 2026 14:06:42 +0000
+Date: Thu, 08 Oct 2026 21:24:10 +0000
 Description: Ĝi (gi-ai) APT repository
 Label: gi-ai
 Origin: gi-ai
 Suite: stable
 MD5Sum:
- cbd163c523abd9811d79824673d90d32             1832 main/binary-amd64/Packages
- 1f6d1df4ac4ab0daa2f247bf6e829ad9              862 main/binary-amd64/Packages.gz
+ a06187f0d91a9a9ff4e248890fbc8394             2748 main/binary-amd64/Packages
+ 27877a66f76416b28810585a90c34cc1             1050 main/binary-amd64/Packages.gz
 SHA1:
- 095ad7c50711a3d1c3ecab047dfbf3f0bedd4b36             1832 main/binary-amd64/Packages
- 01ff90f5c515aac61ef62c219e5d1337a746fc4a              862 main/binary-amd64/Packages.gz
+ efab18a4327c889ec18a780bafa465838dadaec5             2748 main/binary-amd64/Packages
+ 27d3601811e88bfa032ade8f100c12d157a8ff0c             1050 main/binary-amd64/Packages.gz
 SHA256:
- 9efd0cc806c50cb1ba513f3ba906fb134035673c16a5f882aec0efa8d43aaa5b             1832 main/binary-amd64/Packages
- da51666c2f8a197ff45918cf9f2bc8ba25775e53df7465c307e72f0dada84cf8              862 main/binary-amd64/Packages.gz
+ 0c99bc6f39b16532fc1413b231406871469367d8326e9600f5345e809fa2881c             2748 main/binary-amd64/Packages
+ 0045d30bb3325cfe250e88cccb975ea6c86562f3d3ff6f8374986fdb3e6382da             1050 main/binary-amd64/Packages.gz
 SHA512:
- c4cb22a5af143e80653ff35769d4db24beae3f9c49542a37ee33b33bb77de1b2910a5307f7e4f6857a41674224818e04bc4f4f52373fd60c11c8122ad1429296             1832 main/binary-amd64/Packages
- 3903e9849b27e4cc3a21caaa314b30063d1643cc836361f3a174193d16e2f93bb23d18ce16d82271660252bc6236f44a49201522e3101b3817aa3baf59797833              862 main/binary-amd64/Packages.gz
+ 44bb1842b748564a4b8583d9e7a5591610dd9d352afb6d1b36c61596103c2f106f5cd537381cca2cbee0fd370ac930ee1ee6d4ab643c27296e27990de7a6dabf             2748 main/binary-amd64/Packages
+ 30a51f704fd79cfebf3b9b7c4b59a4ccbb75753bfd63b2304cef55fd5ecb4be2328d4ecfda68790d6079ef3089d0119c9e5310d9b9bb3b9d306925c68c86124c             1050 main/binary-amd64/Packages.gz
