@@ -16,10 +16,10 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import math
 import os
-import re
 import stat
 import sys
 import unicodedata
@@ -28,13 +28,42 @@ from pathlib import Path
 from gi_ai import DISPLAY_NAME, __version__, assets, tasks, workspace
 from gi_ai.config import Config, ConfigError, endpoint_privacy, load, token_file_privacy
 from gi_ai.contracts import validate
-from gi_ai.llm import ChatReply, LLMError, Message, make_backend, sanitize_output
+from gi_ai.llm import (
+    ChatReply,
+    EndpointRefused,
+    LLMError,
+    Message,
+    make_backend,
+    sanitize_output,
+)
 
 EXIT_OK, EXIT_FAIL, EXIT_USAGE = 0, 1, 2
 
 # The markers around the question in the ask prompt; a question may not carry its own.
-_MARKER_RE = re.compile(r"<<<QUESTION|QUESTION>>>", re.IGNORECASE)
+MARKERS = ("<<<QUESTION", "QUESTION>>>")
 MARKER_REMOVED = "[marker removed]"
+_MARKS = frozenset({"Mn", "Mc", "Me"})
+# Default_Ignorable_Code_Point ranges from Unicode 15.1.0 DerivedCoreProperties.txt, pinned so
+# that every supported Python removes at least these, whatever its own Unicode tables say.
+INVISIBLE_RANGES = (
+    (0x00AD, 0x00AD),
+    (0x034F, 0x034F),
+    (0x061C, 0x061C),
+    (0x115F, 0x1160),
+    (0x17B4, 0x17B5),
+    (0x180B, 0x180F),
+    (0x200B, 0x200F),
+    (0x202A, 0x202E),
+    (0x2060, 0x206F),
+    (0x3164, 0x3164),
+    (0xFE00, 0xFE0F),
+    (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0),
+    (0xFFF0, 0xFFF8),
+    (0x1BCA0, 0x1BCA3),
+    (0x1D173, 0x1D17A),
+    (0xE0000, 0xE0FFF),
+)
 
 VERSION_TEXT = (
     f"gi-ai {__version__}\n"
@@ -47,14 +76,65 @@ VERSION_TEXT = (
 )
 
 
-def normalise_question(question: str) -> str:
-    """NFKC, then without format characters (zero-width spaces, joiners, direction marks)."""
+@functools.lru_cache(maxsize=4096)
+def _invisible(char: str) -> bool:
+    if unicodedata.category(char) in ("Cf", "Cn"):
+        return True
+    code = ord(char)
+    return any(low <= code <= high for low, high in INVISIBLE_RANGES)
+
+
+def normalise_question(question: str, limit: int | None = None) -> str:
+    """NFKC, then without invisible characters (format, unassigned, default-ignorable).
+
+    With a limit, filtering stops once the kept text is longer than it: the caller only needs
+    to know that it is too long, not the rest of a text that NFKC grew many times over.
+    """
     text = unicodedata.normalize("NFKC", question)
-    return "".join(c for c in text if unicodedata.category(c) != "Cf")
+    kept: list[str] = []
+    for char in text:
+        if not _invisible(char):
+            kept.append(char)
+            if limit is not None and len(kept) > limit:
+                break
+    return "".join(kept)
+
+
+def _base(char: str) -> str | None:
+    """The upper-cased base letter of a character that is a letter plus combining marks."""
+    parts = unicodedata.normalize("NFD", char)
+    if any(unicodedata.category(m) not in _MARKS for m in parts[1:]):
+        return None
+    return parts[0].upper()
+
+
+def _match_end(bases: list[str | None], marks: list[bool], start: int, marker: str) -> int:
+    """End of `marker` matched at `start` (marks after each marker character included), or -1."""
+    pos = start
+    for wanted in marker:
+        if pos >= len(bases) or bases[pos] != wanted:
+            return -1
+        pos += 1
+        while pos < len(marks) and marks[pos]:
+            pos += 1
+    return pos
 
 
 def neutralise_markers(question: str) -> str:
-    return _MARKER_RE.sub(MARKER_REMOVED, question)
+    """Replace marker text, matched across letter case and combining marks, in one pass."""
+    bases = [_base(c) for c in question]
+    marks = [unicodedata.category(c) in _MARKS for c in question]
+    out: list[str] = []
+    pos = 0
+    while pos < len(question):
+        end = max(_match_end(bases, marks, pos, marker) for marker in MARKERS)
+        if end > pos:
+            out.append(MARKER_REMOVED)
+            pos = end
+        else:
+            out.append(question[pos])
+            pos += 1
+    return "".join(out)
 
 
 def _print(obj: object, as_json: bool) -> None:
@@ -126,14 +206,19 @@ def cmd_ask(cfg: Config, args: argparse.Namespace) -> int:
             f"gi ask: question longer than {cfg.limits.max_input_chars} characters", file=sys.stderr
         )
         return EXIT_USAGE
+    normalised = normalise_question(question, cfg.limits.max_input_chars)
+    if len(normalised) > cfg.limits.max_input_chars:
+        print(
+            f"gi ask: question longer than {cfg.limits.max_input_chars} characters "
+            "after normalising",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
     system = assets.load_toml("prompts", "system.toml")["prompt"]["text"]
     template = assets.load_toml("prompts", "ask.toml")["prompt"]["text"]
     messages = [
         Message("system", system),
-        Message(
-            "user",
-            template.replace("{{question}}", neutralise_markers(normalise_question(question))),
-        ),
+        Message("user", template.replace("{{question}}", neutralise_markers(normalised))),
     ]
     try:
         reply = make_backend(cfg.llm).chat(messages)
@@ -263,4 +348,9 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"gi: configuration error: {exc}", file=sys.stderr)
         return EXIT_USAGE
-    return HANDLERS[args.cmd](cfg, args)
+    try:
+        return HANDLERS[args.cmd](cfg, args)
+    except EndpointRefused as exc:
+        # Found at connect time (a looked-up name or the connected peer); nothing was sent.
+        print(f"gi: {exc}", file=sys.stderr)
+        return EXIT_USAGE

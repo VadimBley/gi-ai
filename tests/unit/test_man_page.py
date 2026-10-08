@@ -75,3 +75,25 @@ def test_at27_man_page_states_the_normalisation():
     text = _all_plain()
     assert "NFKC" in text
     assert "format characters" in text
+
+
+def test_at28_man_page_states_the_connect_time_rule():
+    text = _all_plain()
+    for needle in (
+        "looked up once per request",
+        "localhost does not resolve to loopback",
+        "cannot resolve",
+        "Redirects are never followed",
+        "64:ff9b:1::/48",
+        "2002::/16",
+        "zone id",
+    ):
+        assert needle in text, needle
+    assert "A host name is not looked up for this check" not in text
+
+
+def test_at30_at31_man_page_states_marks_and_both_limits():
+    text = _all_plain()
+    for needle in ("invisible characters", "combining marks", "after normalising"):
+        assert needle in text, needle
+    assert "The length limit applies to the question as typed." not in text

@@ -1,0 +1,33 @@
+Ĝi 0.1.2 - security fixes
+
+This release contains security fixes only. Please upgrade.
+
+Security
+- Cloud metadata addresses can no longer be reached through a host name. Ĝi looks a host name
+  (also localhost) up once per request, refuses it before connecting if any of its addresses is
+  a metadata address, connects only to the addresses of that lookup and checks the connected
+  address again before it sends anything. Redirects from the model server are never followed.
+- More IPv6 spellings of the metadata addresses are refused: IPv4-translated, local-use NAT64
+  (64:ff9b:1::/48) and 6to4 (2002::/16) addresses that carry one of them, and addresses with a
+  zone id such as [fd00:ec2::254%25eth0].
+- The question markers can no longer be split with invisible characters (such as variation
+  selectors) or disguised with accents and other combining marks. Such text is replaced by
+  [marker removed] before the question reaches the model.
+
+Changes you may notice
+- localhost must resolve only to loopback addresses. If it resolves to anything else, Ĝi stops
+  with "refusing the endpoint ...: localhost does not resolve to loopback" (exit 2).
+- A host name that does not resolve is now reported as "cannot resolve <host>" instead of
+  "cannot reach ...".
+- The question length limit (limits.max_input_chars) also applies after normalising. A question
+  that grows past it is refused with "question longer than N characters after normalising"
+  (exit 2) before any connection is made.
+- Emoji followed by a variation selector may reach the model as plain-text emoji.
+
+Upgrade
+  sudo apt update && sudo apt upgrade
+
+Your configuration and workspace stay as they are. Check the new version with: gi --version
+
+Report bugs to bugs@gi-ai.app. Report security problems only privately through
+https://github.com/VadimBley/gi-ai/security/advisories/new

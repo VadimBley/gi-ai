@@ -10,7 +10,7 @@
 .\"
 .\" You should have received a copy of the GNU Affero General Public License along with Ĝi.
 .\" If not, see <https://www.gnu.org/licenses/>.
-.TH GI-AI 1 "2026-10-08" "gi-ai 0.1.1" "User Commands"
+.TH GI-AI 1 "2026-10-08" "gi-ai 0.1.2" "User Commands"
 .SH NAME
 gi, gi-ai \- Ĝi, a private local AI assistant
 .SH SYNOPSIS
@@ -40,12 +40,20 @@ statistics (tokens in and out, reasoning tokens, tokens per second, time to
 first token) is printed to standard error after the answer, or
 \fBstats: none\fR when the server sends none. The question is passed to the
 model between two marker lines. The question is first normalised: Unicode
-NFKC (so fullwidth letters become plain ones), then all format characters
-(zero-width spaces and joiners, direction marks) are removed; emoji joined by
-zero-width joiners may reach the model as separate emoji. Marker text in the
-normalised question (\fB<<<QUESTION\fR or \fBQUESTION>>>\fR, in any letter
-case) is replaced by \fB[marker removed]\fR. The model receives the
-normalised text. The length limit applies to the question as typed.
+NFKC (so fullwidth letters become plain ones), then all invisible characters
+are removed: format characters (zero-width spaces and joiners, direction
+marks), characters this Python does not know yet, and the other default-ignorable
+characters (such as variation selectors and fillers); emoji joined by
+zero-width joiners or followed by a variation selector may reach the model as
+separate or plain-text emoji. Marker text in the normalised question
+(\fB<<<QUESTION\fR or \fBQUESTION>>>\fR) is replaced by \fB[marker removed]\fR,
+in any letter case and with or without combining marks on its characters
+(\fBQUÉSTION>>>\fR, \fBQUESTıON>>>\fR and \fBQUESTION≯>>\fR count as marker text); other
+letters keep their accents. The model receives the normalised text. The length
+limit (\fBlimits.max_input_chars\fR) applies twice: to the question as typed
+and to the normalised question (\fBquestion longer than\fR \fIN\fR
+\fBcharacters after normalising\fR); either refusal exits 2 before any
+connection.
 .TP
 .B init-workspace \fR[\fB\-\-path\fR \fIDIR\fR]
 Create the private workspace (mode 0700) with a hash-chained audit log.
@@ -76,10 +84,24 @@ The cloud metadata addresses 169.254.169.254, 169.254.170.2 and
 fd00:ec2::254 (in any address spelling, also when \fB@gateway\fR resolves to one) are
 always refused, whatever \fBallow_remote\fR says: every command stops with
 \fBrefusing the endpoint\fR \fIaddress\fR\fB: a cloud metadata address\fR before
-any connection is made. A host name is not looked up for this check; with
-\fBallow_remote = true\fR Ĝi connects to whatever address it resolves to, and
-\fBselfcheck\fR reports it as \fBunresolved name\fR. Other link-local
-addresses are allowed when \fBallow_remote\fR is true.
+any connection is made. IPv6 addresses that carry one of the IPv4 metadata
+addresses count as that address: IPv4-mapped, IPv4-compatible, IPv4-translated
+(::ffff:0:0:0/96), NAT64 (64:ff9b::/96 and the local-use 64:ff9b:1::/48 in
+each of its layouts) and 6to4 (2002::/16). A zone id
+(\fB[fd00:ec2::254%25eth0]\fR) is read only for this refusal; any other endpoint
+with a zone id is not accepted. A host name (also \fBlocalhost\fR) is looked
+up once per request, when Ĝi connects: if any address it resolves to is a
+metadata address, the command stops the same way and nothing is connected;
+\fBlocalhost\fR must resolve only to loopback addresses (otherwise
+\fBrefusing the endpoint\fR \fIaddress\fR\fB: localhost does not resolve to
+loopback\fR, exit 2). Ĝi connects only to the addresses of that one lookup, in
+order, all attempts within \fBtimeout_s\fR together, and checks the connected
+address again before it sends anything. A name that does not resolve is a
+model error (\fBcannot resolve\fR \fIhost\fR). Redirects are never followed:
+a redirect reply is a model error and nothing is sent to its target.
+\fBselfcheck\fR does not look names up and reports them as
+\fBunresolved name\fR. Other link-local addresses are allowed when
+\fBallow_remote\fR is true.
 .TP
 .B model\fR, \fBtimeout_s\fR (1-3600), \fBallow_remote
 Model name, request timeout in seconds, and whether a non-local endpoint is allowed.

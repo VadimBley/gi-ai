@@ -103,3 +103,11 @@ def test_docs_page_states_the_1_4_rules():
 def test_security_page_states_the_metadata_refusal():
     text = _plain("security")
     assert "metadata" in text
+
+
+def test_docs_and_security_pages_state_the_1_5_rules():
+    # SPEC-0001 1.5.0: names are looked up once and checked; IPv6 forms that embed the address.
+    for page in ("docs", "security"):
+        text = _plain(page)
+        assert "looked up" in text, page
+        assert "IPv6" in text, page

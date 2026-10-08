@@ -19,13 +19,15 @@ import http.client
 import json
 import math
 import re
+import socket
 import threading
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
-from gi_ai.config import LLMConfig
+from gi_ai.config import LLMConfig, is_loopback_address, literal_address, metadata_address
 
 # ANSI escape sequences and other C0/C1 control characters except \n and \t.
 _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)")
@@ -77,6 +79,10 @@ class LLMError(RuntimeError):
     pass
 
 
+class EndpointRefused(Exception):
+    """The endpoint leads to an address Ĝi never talks to. Not a model error: the command stops."""
+
+
 def strip_controls(text: str) -> str:
     """Remove terminal escape sequences and control characters (keeps \\n and \\t)."""
     return _CONTROL.sub("", _ANSI.sub("", text))
@@ -124,9 +130,120 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _refusal(host: str, addresses: list[str]) -> EndpointRefused | None:
+    """Why addresses looked up for `host` (or its peer) may not be used; None if they may."""
+    for address in addresses:
+        metadata = metadata_address(address)
+        if metadata is not None:
+            return EndpointRefused(f"refusing the endpoint {metadata}: a cloud metadata address")
+    if host.lower() == "localhost":
+        for address in addresses:
+            if not is_loopback_address(address.split("%", 1)[0]):
+                shown = address.split("%", 1)[0]
+                return EndpointRefused(
+                    f"refusing the endpoint {shown}: localhost does not resolve to loopback"
+                )
+    return None
+
+
+def _addresses(host: str, port: int) -> list[tuple[int, tuple[Any, ...]]]:
+    """(family, socket address) to try: the literal itself, or ONE lookup of the name."""
+    literal = literal_address(host)
+    if literal is not None:
+        if literal.version == 4:
+            return [(socket.AF_INET, (str(literal), port))]
+        return [(socket.AF_INET6, (str(literal), port, 0, 0))]
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except (OSError, ValueError):
+        infos = []
+    found = [(int(family), tuple(sockaddr)) for family, _, _, _, sockaddr in infos]
+    if not found:
+        raise LLMError(f"cannot resolve {host}")
+    return found
+
+
+def _guarded_connect(host: str, port: int, timeout: Any, source: Any) -> socket.socket:
+    """Connect to the endpoint without a second lookup; check every address before use.
+
+    The addresses come from one lookup (or the literal); all of them are checked first, then
+    tried in order, all attempts within one `timeout`. The connected peer is checked again
+    before anything (TLS handshake or HTTP request) is sent.
+    """
+    candidates = _addresses(host, port)
+    refusal = _refusal(host, [str(sockaddr[0]) for _, sockaddr in candidates])
+    if refusal is not None:
+        raise refusal
+    budget = float(timeout) if isinstance(timeout, (int, float)) else None
+    deadline = None if budget is None else time.monotonic() + budget
+    failure: OSError = OSError(f"cannot connect to {host}")
+    for family, sockaddr in candidates:
+        remaining = None if deadline is None else deadline - time.monotonic()
+        if remaining is not None and remaining <= 0:
+            failure = TimeoutError("timed out")
+            break
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        try:
+            sock.settimeout(remaining)
+            if source:
+                sock.bind(source)
+            sock.connect(sockaddr)
+            peer = str(sock.getpeername()[0])
+        except OSError as exc:
+            sock.close()
+            failure = exc
+            continue
+        refusal = _refusal(host, [peer])
+        if refusal is not None:
+            sock.close()
+            raise refusal
+        sock.settimeout(budget)
+        return sock
+    raise failure
+
+
+class _GuardedHTTPConnection(http.client.HTTPConnection):
+    """Plain HTTP over a socket from _guarded_connect; Host stays the configured name."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # connect() opens its socket through this attribute, before any request byte is sent.
+        self._create_connection = self._guarded
+
+    def _guarded(self, address: tuple[str, int], timeout: Any = None, source: Any = None) -> Any:
+        return _guarded_connect(address[0], address[1], timeout, source)
+
+
+class _GuardedHTTPSConnection(http.client.HTTPSConnection):
+    """TLS over a socket from _guarded_connect; SNI and certificate use the configured name."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._create_connection = self._guarded
+
+    def _guarded(self, address: tuple[str, int], timeout: Any = None, source: Any = None) -> Any:
+        return _guarded_connect(address[0], address[1], timeout, source)
+
+
+class _GuardedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req: urllib.request.Request) -> Any:
+        return self.do_open(_GuardedHTTPConnection, req)
+
+
+class _GuardedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req: urllib.request.Request) -> Any:
+        # No context: HTTPSConnection builds the default one (certificate and name checked).
+        return self.do_open(_GuardedHTTPSConnection, req)
+
+
 def _opener() -> urllib.request.OpenerDirector:
     # ProxyHandler({}) ignores proxy environment variables: only the endpoint is contacted.
-    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _NoRedirect(),
+        _GuardedHTTPHandler(),
+        _GuardedHTTPSHandler(),
+    )
 
 
 def _error_member(obj: object) -> str | None:
@@ -203,12 +320,12 @@ def _http_json(
 def _with_deadline(work: Any, timeout: float) -> bytes:
     """Run one exchange; give up after `timeout` seconds in total, however slow the server."""
     result: list[bytes] = []
-    failure: list[LLMError] = []
+    failure: list[LLMError | EndpointRefused] = []
 
     def run() -> None:
         try:
             result.append(work())
-        except LLMError as exc:
+        except (LLMError, EndpointRefused) as exc:
             failure.append(exc)
         except BaseException:  # never let a raw message (or a crash) out of the worker
             failure.append(LLMError("unexpected error while talking to the model server"))
