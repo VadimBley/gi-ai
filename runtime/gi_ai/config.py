@@ -43,7 +43,7 @@ FILE_PLACE_RULE = "token_file must be a regular file inside ~/.config/gi-ai/ rea
 # scheme://host[:port][/] and nothing else: no user info, path, query or fragment.
 _ENDPOINT_RE = re.compile(
     r"(?P<scheme>https?)://"
-    r"(?P<host>@gateway|[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])"
+    r"(?P<host>@gateway|[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+(?:%25[A-Za-z0-9._~-]{1,64})?\])"
     r"(?::(?P<port>[0-9]{1,5}))?/?"
 )
 
@@ -69,9 +69,21 @@ METADATA_ADDRESSES = frozenset(
         ipaddress.ip_address("fd00:ec2::254"),
     }
 )
-# IPv6 forms that carry an IPv4 address in their last 32 bits (NAT64, IPv4-compatible).
-_NAT64 = ipaddress.ip_network("64:ff9b::/96")
-_IPV4_COMPATIBLE = ipaddress.ip_network("::/96")
+# IPv6 forms that carry an IPv4 address in their last 32 bits: IPv4-mapped, IPv4-compatible,
+# IPv4-translated (SIIT) and the well-known NAT64 prefix.
+_LAST_32_BITS = tuple(
+    ipaddress.ip_network(n) for n in ("::ffff:0:0/96", "::/96", "::ffff:0:0:0/96", "64:ff9b::/96")
+)
+# Local-use NAT64 (RFC 8215) with the IPv4 address at the RFC 6052 positions for /48, /56, /64
+# and /96; bits 64-71 (the u-octet) are skipped. Each layout: (high bit, width) of its pieces.
+_LOCAL_NAT64 = ipaddress.ip_network("64:ff9b:1::/48")
+_RFC6052_LAYOUTS = (
+    ((48, 16), (72, 16)),
+    ((56, 8), (72, 24)),
+    ((72, 32),),
+    ((96, 32),),
+)
+_6TO4 = ipaddress.ip_network("2002::/16")
 # Spellings the C library also reads as an IPv4 address: 2852039166, 0xa9fea9fe, 0251.0376.0.1
 _LEGACY_IPV4_RE = re.compile(r"[0-9A-Fa-fXx.]+")
 
@@ -139,12 +151,12 @@ def _merge(base: dict[str, Any], top: dict[str, Any]) -> dict[str, Any]:
 
 
 def endpoint_host(endpoint: str) -> str | None:
-    """The host part of a strict endpoint (brackets removed for IPv6), or None."""
+    """The host part of a strict endpoint (IPv6 without brackets, zone id as "%zone"), or None."""
     m = _ENDPOINT_RE.fullmatch(endpoint)
     if m is None:
         return None
     host = m.group("host")
-    return host[1:-1] if host.startswith("[") else host
+    return host[1:-1].replace("%25", "%", 1) if host.startswith("[") else host
 
 
 def _check_endpoint(endpoint: str) -> str:
@@ -160,11 +172,17 @@ def _check_endpoint(endpoint: str) -> str:
         raise ConfigError("llm.endpoint port must be between 1 and 65535")
     host = m.group("host")
     if host.startswith("["):
+        address, _, zone = host[1:-1].partition("%25")
         try:
-            ipaddress.IPv6Address(host[1:-1])
+            ipaddress.IPv6Address(address)
         except ValueError:
             raise ConfigError(hint) from None
-        return host[1:-1]
+        if zone:
+            # A zone id is read only to refuse a metadata address; no other endpoint has one.
+            if metadata_address(address) is None:
+                raise ConfigError(hint)
+            return f"{address}%{zone}"
+        return address
     if host != GATEWAY_HOST and (host.startswith(".") or ".." in host):
         raise ConfigError(hint)
     return host
@@ -174,7 +192,10 @@ def _ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     """The address a host literal names, read the way the C library reads it, or None.
 
     A host ending in "." is a name: the C library looks it up instead of reading it.
+    A zone id ("%eth0") is never accepted here; only metadata_address() reads past one.
     """
+    if "%" in host:
+        return None
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
@@ -189,6 +210,17 @@ def _ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     return ip
 
 
+def literal_address(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """The address a host literal names (read like the C library reads it), or None for a name."""
+    return _ip(host)
+
+
+def is_loopback_address(address: str) -> bool:
+    """Is this address literal (no name, no zone id) a loopback address?"""
+    ip = _ip(address)
+    return ip is not None and ip.is_loopback
+
+
 def _is_loopback(host: str) -> bool:
     if host.lower() == "localhost":
         return True
@@ -196,15 +228,40 @@ def _is_loopback(host: str) -> bool:
     return ip is not None and ip.is_loopback
 
 
+def _bits(value: int, high: int, width: int) -> int:
+    """`width` bits of a 128-bit value, starting `high` bits from the top."""
+    return (value >> (128 - high - width)) & ((1 << width) - 1)
+
+
+def _embedded_ipv4(ip: ipaddress.IPv6Address) -> list[ipaddress.IPv4Address]:
+    """Every IPv4 address an IPv6 address carries in a known embedding form."""
+    value = int(ip)
+    found = []
+    if any(ip in net for net in _LAST_32_BITS):
+        found.append(value & 0xFFFFFFFF)
+    if ip in _LOCAL_NAT64:
+        for layout in _RFC6052_LAYOUTS:
+            v4 = 0
+            for high, width in layout:
+                v4 = (v4 << width) | _bits(value, high, width)
+            found.append(v4)
+    if ip in _6TO4:
+        found.append(_bits(value, 16, 32))
+    return [ipaddress.IPv4Address(v4) for v4 in found]
+
+
 def metadata_address(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     """The cloud metadata address a host literal reaches, or None."""
+    # A zone id does not change the address ("fd00:ec2::254%eth0"); IPv6Address equality
+    # would include it, so it is dropped before comparing.
+    host = host.split("%", 1)[0]
     # "169.254.169.254." is looked up as a name, which may well answer with that address.
     ip = _ip(host[:-1] if host.endswith(".") else host)
     if ip is None:
         return None
-    candidates = [ip]
-    if isinstance(ip, ipaddress.IPv6Address) and (ip in _NAT64 or ip in _IPV4_COMPATIBLE):
-        candidates.append(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
+    candidates: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = [ip]
+    if isinstance(ip, ipaddress.IPv6Address):
+        candidates += _embedded_ipv4(ip)
     for candidate in candidates:
         if candidate in METADATA_ADDRESSES:
             return candidate

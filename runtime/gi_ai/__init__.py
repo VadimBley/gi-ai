@@ -15,5 +15,5 @@
 
 __all__ = ["DISPLAY_NAME", "__version__"]
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 DISPLAY_NAME = "Ĝi"
