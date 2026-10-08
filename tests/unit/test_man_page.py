@@ -52,3 +52,26 @@ def test_reporting_bugs_names_bugs_address_and_advisories_only():
 
 def test_synopsis_mentions_version():
     assert "--version" in section("SYNOPSIS") or "--version" in section("OPTIONS")
+
+
+def _all_plain() -> str:
+    return " ".join(plain(re.sub(r"\\-", "-", MAN)).split())
+
+
+def test_at24_man_page_states_the_metadata_refusal():
+    text = _all_plain()
+    for needle in ("169.254.169.254", "169.254.170.2", "fd00:ec2::254", "a cloud metadata address"):
+        assert needle in text, needle
+    assert "METADATA" in text
+
+
+def test_at25_man_page_states_the_token_file_rule():
+    text = _all_plain()
+    assert "token_file must be a regular file inside ~/.config/gi-ai/ reached without links" in text
+    assert "symbolic link" in text and "hard link" in text
+
+
+def test_at27_man_page_states_the_normalisation():
+    text = _all_plain()
+    assert "NFKC" in text
+    assert "format characters" in text

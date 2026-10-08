@@ -183,3 +183,84 @@ def test_at15_no_token_file_no_check(cli, capsys, gi_config):
     gi_config(backend="lmstudio", endpoint="http://127.0.0.1:1234")
     _, _, checks = _selfcheck(cli, capsys)
     assert "token-file-private" not in checks
+
+
+# --- AT-24: cloud metadata addresses (SPEC-0001 1.4.0 B6, B7) --------------------------------
+
+
+@pytest.mark.parametrize(
+    "endpoint,ip",
+    [
+        ("http://169.254.169.254", "169.254.169.254"),
+        ("http://169.254.170.2:80", "169.254.170.2"),
+        ("http://[fd00:ec2::254]", "fd00:ec2::254"),
+        ("http://[::ffff:169.254.169.254]", "169.254.169.254"),
+        ("http://2852039166", "169.254.169.254"),
+        ("http://169.254.169.254.", "169.254.169.254"),
+    ],
+)
+@pytest.mark.parametrize("allow_remote", [True, False])
+def test_at24_selfcheck_reports_metadata(cli, capsys, gi_config, endpoint, ip, allow_remote):
+    gi_config(backend="lmstudio", endpoint=endpoint, allow_remote=allow_remote)
+    code, report, checks = _selfcheck(cli, capsys)
+    assert checks["model-endpoint-private"] == {
+        "id": "model-endpoint-private",
+        "ok": False,
+        "detail": f"METADATA {ip}",
+    }
+    assert report["ok"] is False
+    assert code == 1
+    assert cli("selfcheck") == 1
+    assert f"[FAIL] model-endpoint-private: METADATA {ip}" in capsys.readouterr().out
+
+
+def test_at24_selfcheck_reports_metadata_via_gateway(cli, capsys, gi_config, tmp_path, monkeypatch):
+    route = tmp_path / "route"
+    route.write_text(
+        "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n"
+        "eth0\t00000000\tFEA9FEA9\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+        encoding="ascii",
+    )
+    monkeypatch.setattr(config, "ROUTE_FILE", route, raising=False)
+    gi_config(backend="lmstudio", endpoint="http://@gateway:1234", allow_remote=True)
+    code, _, checks = _selfcheck(cli, capsys)
+    assert checks["model-endpoint-private"]["detail"] == "METADATA 169.254.169.254"
+    assert code == 1
+
+
+def test_at24_selfcheck_with_metadata_does_not_read_the_token_file(cli, capsys, gi_env, gi_config):
+    # 0640 would stop a load that reads the file; selfcheck must still report both checks.
+    path = _token_file(gi_env, 0o640)
+    gi_config(
+        backend="lmstudio",
+        endpoint="http://169.254.169.254",
+        allow_remote=True,
+        token_file=str(path),
+    )
+    code = cli("--json", "selfcheck")
+    out, err = capsys.readouterr()
+    assert out, f"no JSON report (exit {code}): {err}"
+    checks = {c["id"]: c for c in json.loads(out)["checks"]}
+    assert code == 1
+    assert checks["model-endpoint-private"]["detail"] == "METADATA 169.254.169.254"
+    assert checks["token-file-private"]["ok"] is False
+    assert LEAK_MARK not in out + err
+
+
+@pytest.mark.parametrize(
+    "endpoint,detail",
+    [
+        ("http://169.254.1.1:1234", "private network 169.254.1.1"),
+        ("http://169.254.169.253", "private network 169.254.169.253"),
+        ("http://[fe80::1]:1234", "private network fe80::1"),
+    ],
+)
+def test_at24_selfcheck_other_link_local_still_passes(cli, capsys, gi_config, endpoint, detail):
+    gi_config(backend="lmstudio", endpoint=endpoint, allow_remote=True)
+    code, _, checks = _selfcheck(cli, capsys)
+    assert checks["model-endpoint-private"] == {
+        "id": "model-endpoint-private",
+        "ok": True,
+        "detail": detail,
+    }
+    assert code == 0

@@ -1,0 +1,24 @@
+Ĝi 0.1.1 - security fixes
+
+This release contains security fixes only. Please upgrade.
+
+Security
+- Cloud metadata addresses are never used as the model server. The addresses 169.254.169.254,
+  169.254.170.2 and fd00:ec2::254 are refused in every spelling, also when "@gateway" points to
+  one of them and whatever allow_remote says. Ĝi stops before it connects or reads a token, and
+  gi selfcheck reports such an endpoint as METADATA.
+- The token file (token_file) must be a single-link file inside ~/.config/gi-ai/, reached without
+  symbolic links: a symbolic link to the file or to one of its folders, or a hard link to the
+  file, is refused and no token is read. If your config folder is a symbolic link, set the
+  token in the GI_AI_LLM_TOKEN environment variable instead; that still works as before.
+- Questions are normalised before they are sent to the model, so marker text disguised with
+  fullwidth or invisible characters can no longer break out of the question and change
+  Ĝi's rules.
+
+Upgrade
+  sudo apt update && sudo apt upgrade
+
+Your configuration and workspace stay as they are. Check the new version with: gi --version
+
+Report bugs to bugs@gi-ai.app. Report security problems only privately through
+https://github.com/VadimBley/gi-ai/security/advisories/new

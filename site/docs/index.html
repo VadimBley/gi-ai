@@ -34,10 +34,10 @@
 <tr><td><code>backend</code></td><td><code>ollama</code> (default), <code>lmstudio</code>, or <code>echo</code> (offline test)</td></tr>
 <tr><td><code>endpoint</code></td><td><code>http://host:port</code>; <code>@gateway</code> means the Windows host seen from WSL</td></tr>
 <tr><td><code>model</code></td><td>The model name or id your server offers</td></tr>
-<tr><td><code>allow_remote</code></td><td>Must be <code>true</code> for any address that is not on this computer</td></tr>
+<tr><td><code>allow_remote</code></td><td>Must be <code>true</code> for any address that is not on this computer. Cloud metadata addresses (<code>169.254.169.254</code>, <code>169.254.170.2</code>, <code>fd00:ec2::254</code>) are always refused</td></tr>
 <tr><td><code>timeout_s</code></td><td>Seconds to wait for an answer (1–3600)</td></tr>
 <tr><td><code>reasoning</code></td><td>LM Studio only: <code>off</code> (default), <code>low</code>, <code>medium</code>, <code>high</code>, <code>on</code>, <code>default</code></td></tr>
-<tr><td><code>token_file</code></td><td>LM Studio API token file, inside <code>~/.config/gi-ai/</code>, mode 0600</td></tr>
+<tr><td><code>token_file</code></td><td>LM Studio API token file, inside <code>~/.config/gi-ai/</code>, mode 0600, reached without links: no symbolic link on the way and no hard link to the file</td></tr>
 </table>
 
 </div></main>

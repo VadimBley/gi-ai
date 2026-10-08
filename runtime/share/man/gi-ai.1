@@ -10,7 +10,7 @@
 .\"
 .\" You should have received a copy of the GNU Affero General Public License along with Ĝi.
 .\" If not, see <https://www.gnu.org/licenses/>.
-.TH GI-AI 1 "2026" "gi-ai 0.1.0" "User Commands"
+.TH GI-AI 1 "2026-10-08" "gi-ai 0.1.1" "User Commands"
 .SH NAME
 gi, gi-ai \- Ĝi, a private local AI assistant
 .SH SYNOPSIS
@@ -39,9 +39,13 @@ Ask the model a question. With \fB\-\-verbose\fR, one line with the reply
 statistics (tokens in and out, reasoning tokens, tokens per second, time to
 first token) is printed to standard error after the answer, or
 \fBstats: none\fR when the server sends none. The question is passed to the
-model between two marker lines; marker text inside the question
-(\fB<<<QUESTION\fR or \fBQUESTION>>>\fR, in any letter case) is replaced by
-\fB[marker removed]\fR. The length limit applies to the question as typed.
+model between two marker lines. The question is first normalised: Unicode
+NFKC (so fullwidth letters become plain ones), then all format characters
+(zero-width spaces and joiners, direction marks) are removed; emoji joined by
+zero-width joiners may reach the model as separate emoji. Marker text in the
+normalised question (\fB<<<QUESTION\fR or \fBQUESTION>>>\fR, in any letter
+case) is replaced by \fB[marker removed]\fR. The model receives the
+normalised text. The length limit applies to the question as typed.
 .TP
 .B init-workspace \fR[\fB\-\-path\fR \fIDIR\fR]
 Create the private workspace (mode 0700) with a hash-chained audit log.
@@ -53,7 +57,8 @@ Create a task record. \fBtask list\fR lists them.
 Check the local security baseline: private workspace (\fBworkspace-private\fR),
 intact audit log (\fBaudit-chain\fR), config files not world-writable,
 \fBmodel-endpoint-private\fR (the endpoint is loopback, or a private, link-local
-or shared address when \fBllm.allow_remote\fR is true) and, when a token file is
+or shared address when \fBllm.allow_remote\fR is true; it fails with
+\fBMETADATA\fR \fIaddress\fR for a cloud metadata address) and, when a token file is
 set, \fBtoken-file-private\fR (owned by you, no group or other permissions).
 .SH CONFIGURATION
 Keys in the \fB[llm]\fR table:
@@ -67,6 +72,14 @@ The host \fB@gateway\fR is replaced on every run by the IPv4 default-route
 gateway read from /proc/net/route (for LM Studio on the Windows host of WSL).
 Any host that is not loopback, including \fB@gateway\fR, needs
 \fBallow_remote = true\fR.
+The cloud metadata addresses 169.254.169.254, 169.254.170.2 and
+fd00:ec2::254 (in any address spelling, also when \fB@gateway\fR resolves to one) are
+always refused, whatever \fBallow_remote\fR says: every command stops with
+\fBrefusing the endpoint\fR \fIaddress\fR\fB: a cloud metadata address\fR before
+any connection is made. A host name is not looked up for this check; with
+\fBallow_remote = true\fR Ĝi connects to whatever address it resolves to, and
+\fBselfcheck\fR reports it as \fBunresolved name\fR. Other link-local
+addresses are allowed when \fBallow_remote\fR is true.
 .TP
 .B model\fR, \fBtimeout_s\fR (1-3600), \fBallow_remote
 Model name, request timeout in seconds, and whether a non-local endpoint is allowed.
@@ -83,11 +96,16 @@ a file holding the API token, sent by the lmstudio backend only. It must
 be inside \fI~/.config/gi\-ai/\fR (this place does not follow
 \fBXDG_CONFIG_HOME\fR); any other place is a configuration error and the file
 is not opened. This place is checked whatever the backend, also when
-\fBGI_AI_LLM_TOKEN\fR is set. The file itself must not be a symbolic link, and
-a symbolically linked folder that leads out of \fI~/.config/gi\-ai/\fR is
-refused. When the file is used, it must be owned by you with mode 0600 or
-stricter, or every command stops with a configuration error. A token cannot
-be written in a config file.
+\fBGI_AI_LLM_TOKEN\fR is set. Ĝi opens the file one folder at a time from
+your home directory and refuses a symbolic link anywhere on the way
+(\fI~/.config\fR, \fI~/.config/gi\-ai\fR or the file itself); the file must be
+a regular file with exactly one name (no hard link). Otherwise every command
+stops with the configuration error \fBtoken_file must be a regular file inside
+~/.config/gi\-ai/ reached without links\fR and no token is read. If your
+config folder is a symbolic link, use \fBGI_AI_LLM_TOKEN\fR instead. When the
+file is used, it must be owned by you with mode 0600 or stricter, or every
+command stops with a configuration error. A token cannot be written in a
+config file.
 .IP
 A token, from this file or from \fBGI_AI_LLM_TOKEN\fR, is only sent to an
 endpoint whose host is a loopback address or a private, link-local or shared

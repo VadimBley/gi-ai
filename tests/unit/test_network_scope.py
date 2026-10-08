@@ -249,3 +249,218 @@ def test_at18_token_to_loopback_reaches_the_endpoint_only(
     assert capsys.readouterr().out == "ok\n"
     assert server.requests[0].headers["authorization"] == f"Bearer {LEAK_MARK}"
     assert {peer[0] for peer in connects} <= {"127.0.0.1", "::1"}
+
+
+# --- AT-24: cloud metadata addresses are always refused (SPEC-0001 1.4.0 B7) ----------------
+
+INSIDE_PATH = "~/.config/gi-ai/token"
+METADATA_TEXT = "refusing the endpoint {ip}: a cloud metadata address"
+
+# endpoint, the address the message names
+METADATA_ENDPOINTS = [
+    ("http://169.254.169.254", "169.254.169.254"),
+    ("http://169.254.169.254:80", "169.254.169.254"),
+    ("http://169.254.170.2:80", "169.254.170.2"),
+    ("https://169.254.170.2", "169.254.170.2"),
+    ("http://[fd00:ec2::254]", "fd00:ec2::254"),
+    ("http://[fd00:ec2::254]:1234", "fd00:ec2::254"),
+]
+
+# Spellings of the same addresses that libc or the kernel would also reach (bypass attempts).
+METADATA_BYPASSES = [
+    ("http://[::ffff:169.254.169.254]", "169.254.169.254"),
+    ("http://[::ffff:a9fe:a9fe]:80", "169.254.169.254"),
+    ("http://[::FFFF:169.254.170.2]", "169.254.170.2"),
+    ("http://[64:ff9b::a9fe:a9fe]", "169.254.169.254"),
+    ("http://[::a9fe:a9fe]", "169.254.169.254"),
+    ("http://[FD00:EC2:0::254]", "fd00:ec2::254"),
+    ("http://[fd00:ec2:0:0:0:0:0:254]", "fd00:ec2::254"),
+    ("http://[fd00:ec2::0254]", "fd00:ec2::254"),
+    ("http://2852039166", "169.254.169.254"),
+    ("http://0xa9fea9fe", "169.254.169.254"),
+    ("http://0XA9FEA9FE:80", "169.254.169.254"),
+    ("http://0251.0376.0251.0376", "169.254.169.254"),
+    ("http://0xa9.0xfe.0xa9.0xfe", "169.254.169.254"),
+    ("http://169.254.43518", "169.254.169.254"),
+    ("http://169.16689662", "169.254.169.254"),
+    ("http://169.254.169.254.", "169.254.169.254"),
+    ("http://169.254.169.254.:80", "169.254.169.254"),
+    ("http://0251.254.169.254", "169.254.169.254"),
+    ("http://169.254.170.002", "169.254.170.2"),
+]
+
+
+def _metadata_refused(cli, capsys, argv, ip):
+    code = cli(*argv)
+    out, err = capsys.readouterr()
+    assert code == 2, (argv, out, err)
+    assert METADATA_TEXT.format(ip=ip) in err
+    assert LEAK_MARK not in out + err
+    return err
+
+
+@pytest.mark.parametrize("endpoint,ip", METADATA_ENDPOINTS + METADATA_BYPASSES)
+@pytest.mark.parametrize("backend", ["lmstudio", "ollama"])
+def test_at24_metadata_endpoint_refused_before_any_socket(
+    cli, capsys, gi_config, no_sockets, backend, endpoint, ip
+):
+    gi_config(backend=backend, endpoint=endpoint, allow_remote=True)
+    for argv in (("ask", "hello"), ("health",), ("task", "list")):
+        _metadata_refused(cli, capsys, argv, ip)
+    assert no_sockets == [], "no name lookup and no connect may happen"
+    with pytest.raises(config.ConfigError, match="a cloud metadata address"):
+        config.load()
+
+
+@pytest.mark.parametrize("endpoint,ip", METADATA_ENDPOINTS + METADATA_BYPASSES[:3])
+def test_at24_metadata_endpoint_refused_with_a_token(
+    cli, capsys, gi_config, no_sockets, token_source, endpoint, ip
+):
+    gi_config(backend="lmstudio", endpoint=endpoint, allow_remote=True, **token_source)
+    for argv in (("ask", "hello"), ("health",)):
+        err = _metadata_refused(cli, capsys, argv, ip)
+        assert "API token" not in err, "the metadata refusal comes first"
+    assert no_sockets == []
+
+
+@pytest.mark.parametrize("endpoint,ip", METADATA_ENDPOINTS[:1] + METADATA_ENDPOINTS[4:5])
+def test_at24_metadata_refused_even_without_allow_remote(
+    cli, capsys, gi_config, no_sockets, endpoint, ip
+):
+    gi_config(backend="lmstudio", endpoint=endpoint, allow_remote=False)
+    err = _metadata_refused(cli, capsys, ("ask", "hello"), ip)
+    assert "allow_remote" not in err
+    assert no_sockets == []
+
+
+def test_at24_metadata_check_runs_before_the_token_file_is_read(
+    cli, capsys, gi_config, gi_env, no_sockets
+):
+    # A token file that would fail its own check (mode 0644): the metadata refusal must win,
+    # proving the endpoint is checked before the token is resolved.
+    path = gi_env / ".config" / "gi-ai" / "token"
+    path.write_text(f"{LEAK_MARK}\n", encoding="utf-8")
+    path.chmod(0o644)
+    gi_config(
+        backend="lmstudio",
+        endpoint="http://169.254.169.254",
+        allow_remote=True,
+        token_file=INSIDE_PATH,
+    )
+    err = _metadata_refused(cli, capsys, ("health",), "169.254.169.254")
+    assert "token_file" not in err
+    assert no_sockets == []
+
+
+def _route_to(tmp_path, monkeypatch, gw_hex):
+    route = tmp_path / "route-metadata"
+    route.write_text(
+        "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n"
+        f"eth0\t00000000\t{gw_hex}\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+        encoding="ascii",
+    )
+    monkeypatch.setattr(config, "ROUTE_FILE", route, raising=False)
+
+
+@pytest.mark.parametrize(
+    "gw_hex,ip", [("FEA9FEA9", "169.254.169.254"), ("02AAFEA9", "169.254.170.2")]
+)
+def test_at24_gateway_resolving_to_metadata_is_refused(
+    cli, capsys, gi_config, no_sockets, tmp_path, monkeypatch, gw_hex, ip
+):
+    _route_to(tmp_path, monkeypatch, gw_hex)
+    gi_config(backend="lmstudio", endpoint="http://@gateway:1234", allow_remote=True)
+    for argv in (("ask", "hello"), ("health",)):
+        _metadata_refused(cli, capsys, argv, ip)
+    assert no_sockets == []
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://169.254.1.1:1234",
+        "http://169.254.169.253",
+        "http://169.254.169.255",
+        "http://169.254.170.3",
+        "http://169.254.170.1",
+        "http://[fe80::1]:1234",
+        "http://[fd00:ec2::253]",
+        "http://[fd00:ec2::1:254]",
+    ],
+)
+def test_at24_other_link_local_addresses_still_load(gi_config, endpoint):
+    gi_config(backend="lmstudio", endpoint=endpoint, allow_remote=True)
+    assert config.load().llm.endpoint == endpoint
+
+
+def test_at24_other_link_local_with_a_token_is_still_allowed(gi_config, token_source):
+    gi_config(
+        backend="lmstudio", endpoint="http://169.254.1.1:1234", allow_remote=True, **token_source
+    )
+    assert config.load().llm.token == LEAK_MARK
+
+
+@pytest.mark.parametrize("endpoint,ip", METADATA_ENDPOINTS + METADATA_BYPASSES)
+def test_at24_privacy_and_token_rule_agree_on_metadata(endpoint, ip):
+    for allow_remote in (False, True):
+        assert config.endpoint_privacy(endpoint, allow_remote) == (False, f"METADATA {ip}")
+    ok, _ = config.token_destination_ok(endpoint)
+    assert ok is False
+
+
+@pytest.mark.parametrize(
+    "endpoint,detail",
+    [
+        ("http://127.0.0.1:1234", "loopback"),
+        ("http://127.1:1234", "loopback"),
+        ("http://0x7f000001", "loopback"),
+        ("http://[::1]", "loopback"),
+        ("http://localhost:1234", "loopback"),
+        ("http://10.1:1234", "private network 10.0.0.1"),
+        ("http://192.168.1.10.", "unresolved name 192.168.1.10."),
+        ("http://127.0.0.1.:1234", "unresolved name 127.0.0.1."),
+        ("http://169.254.1.1", "private network 169.254.1.1"),
+        ("http://8.8.8.8", "PUBLIC 8.8.8.8"),
+        ("http://134744072", "PUBLIC 8.8.8.8"),
+        ("http://0x08.0x08.0x08.0x08", "PUBLIC 8.8.8.8"),
+        ("http://[::ffff:8.8.8.8]", "PUBLIC 8.8.8.8"),
+        ("http://example.com", "unresolved name example.com"),
+        ("http://cafe", "unresolved name cafe"),
+    ],
+)
+def test_at24_privacy_and_load_agree_on_every_host(gi_config, monkeypatch, endpoint, detail):
+    """One parser for all checks: the selfcheck verdict and the token rule at load agree."""
+    monkeypatch.setenv("GI_AI_LLM_TOKEN", LEAK_MARK)
+    ok, got = config.endpoint_privacy(endpoint, allow_remote=True)
+    assert got == detail
+    gi_config(backend="lmstudio", endpoint=endpoint, allow_remote=True)
+    if ok:
+        assert config.load().llm.token == LEAK_MARK
+    else:
+        with pytest.raises(config.ConfigError, match="refusing to send the API token"):
+            config.load()
+
+
+# The C library looks a host ending in "." up as a name (DNS, /etc/hosts), even when the rest
+# is an address: only the metadata refusal reads it as the address, never a permissive check.
+@pytest.mark.parametrize("endpoint", ["http://127.0.0.1.:1234", "http://127.1."])
+def test_at24_trailing_dot_is_not_loopback(cli, capsys, gi_config, no_sockets, endpoint):
+    gi_config(backend="lmstudio", endpoint=endpoint, allow_remote=False)
+    code = cli("ask", "hi")
+    _, err = capsys.readouterr()
+    assert code == 2
+    assert "set llm.allow_remote = true" in err
+    assert no_sockets == []
+
+
+@pytest.mark.parametrize("endpoint", ["http://10.0.0.1.:1234", "http://127.0.0.1.:1234"])
+def test_at24_trailing_dot_gets_no_token(
+    cli, capsys, gi_config, no_sockets, token_source, endpoint
+):
+    gi_config(backend="lmstudio", endpoint=endpoint, allow_remote=True, **token_source)
+    code = cli("ask", "hi")
+    _, err = capsys.readouterr()
+    assert code == 2
+    assert "refusing to send the API token" in err
+    assert LEAK_MARK not in err
+    assert no_sockets == []
