@@ -97,3 +97,24 @@ def test_at30_at31_man_page_states_marks_and_both_limits():
     for needle in ("invisible characters", "combining marks", "after normalising"):
         assert needle in text, needle
     assert "The length limit applies to the question as typed." not in text
+
+
+def test_at32_man_page_states_the_address_classes_and_new_metadata_forms():
+    text = _all_plain()
+    for needle in ("100.100.100.200", "Teredo", "ISATAP", "2001::/32", "::ffff:127.0.0.0/104"):
+        assert needle in text, needle
+    assert "ipaddress" not in text
+
+
+def test_at35_man_page_states_document_input_and_the_stdin_change():
+    text = _all_plain()
+    for needle in (
+        "--file",
+        "max_document_chars",
+        "< /dev/null",
+        "timed out reading the document",
+        "hidden or instruction file",
+        "<<<DOCUMENT",
+    ):
+        assert needle in text, needle
+    assert "--file" in section("SYNOPSIS")

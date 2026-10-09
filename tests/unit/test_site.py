@@ -111,3 +111,14 @@ def test_docs_and_security_pages_state_the_1_5_rules():
         text = _plain(page)
         assert "looked up" in text, page
         assert "IPv6" in text, page
+
+
+def test_docs_and_security_pages_state_the_1_6_rules():
+    # SPEC-0001 1.6.0: documents for gi ask; Alibaba Cloud's metadata address; fixed classes.
+    docs = _plain("docs")
+    assert "--file" in docs and "/dev/null" in docs
+    assert "max_document_chars" in docs
+    for page in ("docs", "security"):
+        text = _plain(page)
+        assert "100.100.100.200" in text, page
+        assert "document" in text, page

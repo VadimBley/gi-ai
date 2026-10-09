@@ -9,6 +9,8 @@ Quick start
        gi ask "What is the capital of Slovakia?"
      Add --verbose to see token counts and speed on standard error:
        gi ask --verbose "What is the capital of Slovakia?"
+     Ask about a text file (or pipe text in; see man gi-ai for the rules):
+       gi ask --file notes.txt "Summarise this in three points."
   4. Create your private workspace and record a task:
        gi init-workspace
        gi task new --type bug --title "Answer was cut off"

@@ -10,7 +10,7 @@
 .\"
 .\" You should have received a copy of the GNU Affero General Public License along with Ĝi.
 .\" If not, see <https://www.gnu.org/licenses/>.
-.TH GI-AI 1 "2026-10-08" "gi-ai 0.1.2" "User Commands"
+.TH GI-AI 1 "2026-10-09" "gi-ai 0.1.3" "User Commands"
 .SH NAME
 gi, gi-ai \- Ĝi, a private local AI assistant
 .SH SYNOPSIS
@@ -18,7 +18,7 @@ gi, gi-ai \- Ĝi, a private local AI assistant
 [\fB\-\-json\fR] [\fB\-\-config\fR \fIFILE\fR] \fICOMMAND\fR ...
 .br
 .B gi ask
-[\fB\-\-verbose\fR] \fIQUESTION\fR
+[\fB\-\-verbose\fR] [\fB\-\-file\fR \fIPATH\fR|\fB\-\fR] \fIQUESTION\fR
 .br
 .B gi \-\-version
 .SH DESCRIPTION
@@ -53,7 +53,50 @@ letters keep their accents. The model receives the normalised text. The length
 limit (\fBlimits.max_input_chars\fR) applies twice: to the question as typed
 and to the normalised question (\fBquestion longer than\fR \fIN\fR
 \fBcharacters after normalising\fR); either refusal exits 2 before any
-connection.
+connection. Lone surrogates (from arguments that are not valid UTF-8) and
+private-use characters are removed too.
+.IP
+\fBDocuments.\fR A question can be about a text: \fB\-\-file\fR \fIPATH\fR
+reads that file, \fB\-\-file \-\fR reads standard input (a pipe or a
+redirected file), and without \fB\-\-file\fR text piped into \fBgi ask\fR is
+read as the document (\fBprintf 'notes' | gi ask "summarise"\fR). Standard input
+that is a terminal, a redirected file, /dev/null or anything else but a pipe is
+not read. The document is placed before the question between its own markers
+(\fB<<<DOCUMENT\fR and \fBDOCUMENT>>>\fR), and the model is told that it is data
+to read, never instructions. It is sent only where the question goes and is
+never written to the workspace, the audit log or any file.
+.IP
+\fBNote for scripts:\fR because a pipe is read, a program that starts
+\fBgi ask\fR with an open pipe on standard input and writes nothing to it waits
+\fBtimeout_s\fR seconds and then stops with \fBtimed out reading the
+document\fR (exit 2). So does \fBcat list | while read q; do gi ask "$q"; done\fR,
+where gi would read the rest of the list. Give such calls no input:
+\fBgi ask "$q" < /dev/null\fR.
+.IP
+A file named with \fB\-\-file\fR is refused (exit 2, \fBcannot use\fR
+\fIpath\fR\fB:\fR \fIreason\fR) when any folder or file name in the path, as
+given or fully resolved, starts with a dot, or when the file name is an
+upper-case Markdown name such as README.md or AGENTS.MD (\fBhidden or
+instruction file\fR); when the last name is a symbolic link (\fBsymbolic
+link\fR); when it is not a regular file, such as a folder, a FIFO or a device
+(\fBnot a regular file\fR); when it lies under /proc, /sys or /dev or is the
+API token file (\fBsecret or system file\fR); and when it is missing
+(\fBnot found\fR) or unreadable (\fBpermission denied\fR, \fBcannot read\fR).
+A folder reached through a symbolic link is fine. The file is opened read-only
+and never changed. With \fB\-\-file\fR \fIPATH\fR, standard input is not read.
+.IP
+Every document must be UTF-8 text without NUL bytes (\fBthe document is not
+UTF-8 text\fR) and must arrive within \fBtimeout_s\fR seconds (that time does not
+count against the model request). Ĝi reads at most four bytes per allowed
+character. A leading byte-order mark is dropped, CR LF and CR become LF, and
+control characters other than newline and tab are removed. The document is
+then normalised and its marker text replaced like the question's. It may hold
+at most \fBlimits.max_document_chars\fR characters, as read and after
+normalising (\fBdocument longer than\fR \fIN\fR \fBcharacters\fR). A
+document that contains the API token is refused (\fBthe document contains the
+API token\fR). An empty document named with \fB\-\-file\fR is refused
+(\fBthe document is empty\fR); an empty pipe means no document. Settings,
+the endpoint and the question are checked before the document is opened.
 .TP
 .B init-workspace \fR[\fB\-\-path\fR \fIDIR\fR]
 Create the private workspace (mode 0700) with a hash-chained audit log.
@@ -68,6 +111,14 @@ intact audit log (\fBaudit-chain\fR), config files not world-writable,
 or shared address when \fBllm.allow_remote\fR is true; it fails with
 \fBMETADATA\fR \fIaddress\fR for a cloud metadata address) and, when a token file is
 set, \fBtoken-file-private\fR (owned by you, no group or other permissions).
+.IP
+The address classes are fixed and the same on every Python version.
+Loopback: 127.0.0.0/8, ::1 and ::ffff:127.0.0.0/104. Private, link-local or
+shared: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10,
+169.254.0.0/16, fc00::/7 and fe80::/10. Every other address is public
+(\fBPUBLIC\fR \fIaddress\fR), also Teredo, 6to4, NAT64, documentation and
+other special ranges, and IPv4-mapped forms of private addresses such as
+::ffff:192.168.0.1. The same classes decide where an API token may be sent.
 .SH CONFIGURATION
 Keys in the \fB[llm]\fR table:
 .TP
@@ -80,14 +131,16 @@ The host \fB@gateway\fR is replaced on every run by the IPv4 default-route
 gateway read from /proc/net/route (for LM Studio on the Windows host of WSL).
 Any host that is not loopback, including \fB@gateway\fR, needs
 \fBallow_remote = true\fR.
-The cloud metadata addresses 169.254.169.254, 169.254.170.2 and
-fd00:ec2::254 (in any address spelling, also when \fB@gateway\fR resolves to one) are
+The cloud metadata addresses 169.254.169.254, 169.254.170.2,
+100.100.100.200 and fd00:ec2::254 (in any address spelling, also when \fB@gateway\fR resolves to one) are
 always refused, whatever \fBallow_remote\fR says: every command stops with
 \fBrefusing the endpoint\fR \fIaddress\fR\fB: a cloud metadata address\fR before
 any connection is made. IPv6 addresses that carry one of the IPv4 metadata
 addresses count as that address: IPv4-mapped, IPv4-compatible, IPv4-translated
 (::ffff:0:0:0/96), NAT64 (64:ff9b::/96 and the local-use 64:ff9b:1::/48 in
-each of its layouts) and 6to4 (2002::/16). A zone id
+each of its layouts), 6to4 (2002::/16), Teredo (2001::/32, as server or as
+inverted client address) and ISATAP (interface identifier 0:5efe, 100:5efe,
+200:5efe or 300:5efe followed by the IPv4 address, under any prefix). A zone id
 (\fB[fd00:ec2::254%25eth0]\fR) is read only for this refusal; any other endpoint
 with a zone id is not accepted. A host name (also \fBlocalhost\fR) is looked
 up once per request, when Ĝi connects: if any address it resolves to is a
@@ -136,6 +189,18 @@ and any other host (a public address or a name other than \fBlocalhost\fR),
 every command stops with the configuration error
 \fBrefusing to send the API token to\fR \fIhost\fR\fB: not a local or private address\fR
 before any connection is made.
+.PP
+Keys in the \fB[limits]\fR table (whole numbers):
+.TP
+.B max_input_chars
+The longest question, in characters (default 8000).
+.TP
+.B max_output_chars
+The longest answer printed; a longer one is cut (default 16000).
+.TP
+.B max_document_chars
+The longest document for \fBgi ask\fR, in characters, 1000 to 1000000
+(default 20000).
 .SH ENVIRONMENT
 .TP
 .B GI_AI_LLM_TOKEN
@@ -163,7 +228,11 @@ Your settings.
 Your private workspace.
 .TP
 .I /proc/net/route
-Read only when the endpoint uses \fB@gateway\fR.
+Read only when the endpoint uses \fB@gateway\fR and \fBallow_remote\fR is true.
+.TP
+.I \-\-file document
+The file you name with \fBgi ask \-\-file\fR, read-only, and text piped into
+\fBgi ask\fR.
 .TP
 .I llm.token_file
 The API token file you name in the settings, if any (mode 0600, inside

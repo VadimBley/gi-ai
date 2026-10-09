@@ -47,6 +47,11 @@ _ENDPOINT_RE = re.compile(
     r"(?::(?P<port>[0-9]{1,5}))?/?"
 )
 
+# Address classes, fixed here and never taken from the ipaddress module's private and loopback
+# flags, whose tables differ between Python versions. Every other address is public.
+_LOOPBACK_NETWORKS = tuple(
+    ipaddress.ip_network(n) for n in ("127.0.0.0/8", "::1/128", "::ffff:127.0.0.0/104")
+)
 _PRIVATE_NETWORKS = tuple(
     ipaddress.ip_network(n)
     for n in (
@@ -66,6 +71,7 @@ METADATA_ADDRESSES = frozenset(
     {
         ipaddress.ip_address("169.254.169.254"),
         ipaddress.ip_address("169.254.170.2"),
+        ipaddress.ip_address("100.100.100.200"),
         ipaddress.ip_address("fd00:ec2::254"),
     }
 )
@@ -84,6 +90,10 @@ _RFC6052_LAYOUTS = (
     ((96, 32),),
 )
 _6TO4 = ipaddress.ip_network("2002::/16")
+_TEREDO = ipaddress.ip_network("2001::/32")
+# ISATAP interface identifiers (bits 64-95), under any prefix: 0000:5efe, 0100:5efe, 0200:5efe,
+# 0300:5efe (the u and g bits set or not), followed by the IPv4 address.
+_ISATAP_IDS = frozenset({0x00005EFE, 0x01005EFE, 0x02005EFE, 0x03005EFE})
 # Spellings the C library also reads as an IPv4 address: 2852039166, 0xa9fea9fe, 0251.0376.0.1
 _LEGACY_IPV4_RE = re.compile(r"[0-9A-Fa-fXx.]+")
 
@@ -122,6 +132,7 @@ class LLMConfig:
 class LimitsConfig:
     max_input_chars: int = 8000
     max_output_chars: int = 16000
+    max_document_chars: int = 20000
 
 
 @dataclass(frozen=True)
@@ -188,8 +199,8 @@ def _check_endpoint(endpoint: str) -> str:
     return host
 
 
-def _ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
-    """The address a host literal names, read the way the C library reads it, or None.
+def _parse(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """The address a host literal names as written, read the way the C library reads it, or None.
 
     A host ending in "." is a name: the C library looks it up instead of reading it.
     A zone id ("%eth0") is never accepted here; only metadata_address() reads past one.
@@ -197,7 +208,7 @@ def _ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     if "%" in host:
         return None
     try:
-        ip = ipaddress.ip_address(host)
+        return ipaddress.ip_address(host)
     except ValueError:
         if not _LEGACY_IPV4_RE.fullmatch(host):
             return None
@@ -205,9 +216,23 @@ def _ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
             return ipaddress.IPv4Address(socket.inet_aton(host))  # parses only, no lookup
         except OSError:
             return None
+
+
+def _ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Like _parse(), with an IPv4-mapped address unwrapped (the address a socket reaches)."""
+    ip = _parse(host)
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
         return ip.ipv4_mapped
     return ip
+
+
+def address_class(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str:
+    """The class of an address as written: "loopback", "private" or "public" (fixed tables)."""
+    if any(ip.version == net.version and ip in net for net in _LOOPBACK_NETWORKS):
+        return "loopback"
+    if any(ip.version == net.version and ip in net for net in _PRIVATE_NETWORKS):
+        return "private"
+    return "public"
 
 
 def literal_address(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
@@ -217,15 +242,12 @@ def literal_address(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address 
 
 def is_loopback_address(address: str) -> bool:
     """Is this address literal (no name, no zone id) a loopback address?"""
-    ip = _ip(address)
-    return ip is not None and ip.is_loopback
+    ip = _parse(address)
+    return ip is not None and address_class(ip) == "loopback"
 
 
 def _is_loopback(host: str) -> bool:
-    if host.lower() == "localhost":
-        return True
-    ip = _ip(host)
-    return ip is not None and ip.is_loopback
+    return host.lower() == "localhost" or is_loopback_address(host)
 
 
 def _bits(value: int, high: int, width: int) -> int:
@@ -247,6 +269,11 @@ def _embedded_ipv4(ip: ipaddress.IPv6Address) -> list[ipaddress.IPv4Address]:
             found.append(v4)
     if ip in _6TO4:
         found.append(_bits(value, 16, 32))
+    if ip in _TEREDO:
+        found.append(_bits(value, 32, 32))  # server
+        found.append(~value & 0xFFFFFFFF)  # client, every bit inverted
+    if _bits(value, 64, 32) in _ISATAP_IDS:
+        found.append(value & 0xFFFFFFFF)
     return [ipaddress.IPv4Address(v4) for v4 in found]
 
 
@@ -305,10 +332,10 @@ def endpoint_privacy(endpoint: str, allow_remote: bool) -> tuple[bool, str]:
         return False, f"METADATA {metadata}"
     if _is_loopback(host):
         return True, "loopback"
-    ip = _ip(host)
+    ip = _parse(host)
     if ip is None:
         return False, f"unresolved name {host}"
-    if any(ip.version == net.version and ip in net for net in _PRIVATE_NETWORKS):
+    if address_class(ip) == "private":
         if allow_remote:
             return True, f"private network {ip}"
         return False, f"private network {ip} (llm.allow_remote is false)"
@@ -491,13 +518,10 @@ def _build_llm(llm_raw: dict[str, Any], refuse_metadata: bool = True) -> LLMConf
     endpoint = llm.endpoint
     resolved = host
     if host == GATEWAY_HOST:
+        if not llm.allow_remote:
+            raise not_local  # before the route table is read
         # Resolved for this run only; never written back.
-        try:
-            resolved = default_gateway(ROUTE_FILE)
-        except ConfigError:
-            if not llm.allow_remote:
-                raise not_local from None
-            raise
+        resolved = default_gateway(ROUTE_FILE)
         endpoint = endpoint.replace(GATEWAY_HOST, resolved, 1)
         if len(endpoint) > MAX_ENDPOINT_CHARS:
             raise ConfigError(f"llm.endpoint is longer than {MAX_ENDPOINT_CHARS} characters")
@@ -528,6 +552,8 @@ def _build_limits(lim_raw: dict[str, Any]) -> LimitsConfig:
         raise ConfigError("limits.max_input_chars out of range")
     if not 1 <= limits.max_output_chars <= 1_000_000:
         raise ConfigError("limits.max_output_chars out of range")
+    if not 1000 <= limits.max_document_chars <= 1_000_000:
+        raise ConfigError("limits.max_document_chars must be between 1000 and 1000000")
     return limits
 
 

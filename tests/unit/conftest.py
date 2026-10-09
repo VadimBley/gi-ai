@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import socket
 import threading
+import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -67,6 +68,7 @@ class Route:
     body: Any = None
     raw: bytes | None = None
     headers: dict[str, str] = field(default_factory=dict)
+    delay: float = 0.0
 
 
 class FakeServer:
@@ -107,6 +109,8 @@ class FakeServer:
                 )
                 if route is None:
                     route = Route(status=404, body={"error": "not found in fake"})
+                if route.delay:
+                    time.sleep(route.delay)
                 data = route.raw if route.raw is not None else json.dumps(route.body).encode()
                 self.send_response(route.status)
                 self.send_header("Content-Type", "application/json")
@@ -136,8 +140,9 @@ class FakeServer:
         method: str | None = None,
         raw: bytes | None = None,
         headers: dict[str, str] | None = None,
+        delay: float = 0.0,
     ) -> None:
-        route = Route(status=status, body=body, raw=raw, headers=headers or {})
+        route = Route(status=status, body=body, raw=raw, headers=headers or {}, delay=delay)
         self.routes[(method, path)] = route
 
     def requests_to(self, path: str) -> list[Recorded]:
@@ -289,3 +294,32 @@ def lm_replies():
             return {"type": "reasoning", "content": text}
 
     return Builders
+
+
+RUNTIME = str(__import__("pathlib").Path(__file__).resolve().parents[2] / "runtime")
+GI_MAIN = (
+    f"import sys; sys.path.insert(0, {RUNTIME!r}); from gi_ai.cli import main; sys.exit(main())"
+)
+
+
+@pytest.fixture
+def gi_argv():
+    """The command line that starts gi from this checkout in an isolated Python."""
+    import sys
+
+    return [sys.executable, "-I", "-c", GI_MAIN]
+
+
+@pytest.fixture
+def gi_run(subprocess_env):
+    """run(*args, **subprocess_kwargs): gi in a fresh isolated Python, as a user would start it."""
+    import subprocess
+    import sys
+
+    def run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess:
+        kwargs.setdefault("capture_output", True)
+        kwargs.setdefault("timeout", 30)
+        env = dict(subprocess_env, **kwargs.pop("env", {}))
+        return subprocess.run([sys.executable, "-I", "-c", GI_MAIN, *args], env=env, **kwargs)
+
+    return run
