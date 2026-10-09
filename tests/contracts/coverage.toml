@@ -13,4 +13,4 @@
 
 # Which spec versions this tree implements.
 [implemented]
-SPEC-0001 = "1.5.0"
+SPEC-0001 = "1.6.0"

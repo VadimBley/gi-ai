@@ -449,7 +449,7 @@ def test_at24_privacy_and_token_rule_agree_on_metadata(endpoint, ip):
         ("http://8.8.8.8", "PUBLIC 8.8.8.8"),
         ("http://134744072", "PUBLIC 8.8.8.8"),
         ("http://0x08.0x08.0x08.0x08", "PUBLIC 8.8.8.8"),
-        ("http://[::ffff:8.8.8.8]", "PUBLIC 8.8.8.8"),
+        ("http://[::ffff:8.8.8.8]", "PUBLIC ::ffff:8.8.8.8"),  # 1.6.0: shown as written
         ("http://example.com", "unresolved name example.com"),
         ("http://cafe", "unresolved name cafe"),
     ],
@@ -945,3 +945,195 @@ def test_at28_redirect_to_metadata_is_not_followed(
     assert [r.path for r in server.requests] == [CHAT, MODELS]
     assert wire["connects"] == [("127.0.0.1", server.port)] * 2, "no second connect"
     assert resolver.calls == ["localhost", "localhost"]
+
+
+# --- AT-32 (SPEC-0001 1.6.0): Alibaba Cloud, Teredo, ISATAP; fixed address classes -------------
+
+ALIBABA = "100.100.100.200"
+METADATA_AT32 = [
+    ("http://100.100.100.200", ALIBABA),
+    ("http://1684301000", ALIBABA),
+    ("http://0x646464c8", ALIBABA),
+    ("http://[::ffff:100.100.100.200]", ALIBABA),
+    ("http://[64:ff9b::6464:64c8]", ALIBABA),
+    ("http://[2002:6464:64c8::1]", ALIBABA),
+    ("http://[2001:0:a9fe:a9fe::1]", "169.254.169.254"),  # Teredo server
+    ("http://[2001:0:c000:201::5601:5601]", "169.254.169.254"),  # Teredo client, inverted
+    ("http://[2001:0:c000:201::9b9b:9b37]", ALIBABA),  # Teredo client, inverted
+    ("http://[fe80::5efe:a9fe:a9fe]", "169.254.169.254"),  # ISATAP
+    ("http://[fe80::5efe:a9fe:a9fe%25eth0]", "169.254.169.254"),
+    ("http://[fe80::200:5efe:a9fe:a9fe]", "169.254.169.254"),
+    ("http://[fe80::300:5efe:a9fe:aa02]", "169.254.170.2"),
+    ("http://[2001:db8::5efe:6464:64c8]", ALIBABA),  # ISATAP under any prefix
+]
+# Beyond the spec's list: the other ISATAP u/g values and a Teredo server on Alibaba's address.
+METADATA_AT32_MORE = [
+    ("http://[fe80::100:5efe:a9fe:a9fe]", "169.254.169.254"),
+    ("http://[2001:0:6464:64c8::]", ALIBABA),
+    ("http://[2001:0:6464:64c8:8000:ffff:ffff:ffff]", ALIBABA),
+]
+NOT_METADATA_AT32 = [
+    ("http://100.64.0.1", "private network 100.64.0.1"),
+    ("http://100.100.100.199", "private network 100.100.100.199"),
+    ("http://[fe80::5efe:c0a8:1]", "private network fe80::5efe:c0a8:1"),
+    ("http://[2001:0:c000:201::3f57:fefe]", "PUBLIC 2001:0:c000:201::3f57:fefe"),
+    ("http://[fe80::400:5efe:a9fe:a9fe]", "private network fe80::400:5efe:a9fe:a9fe"),
+    ("http://[fe80::5eff:a9fe:a9fe]", "private network fe80::5eff:a9fe:a9fe"),
+]
+
+
+@pytest.mark.parametrize("allow_remote", [True, False])
+@pytest.mark.parametrize("endpoint,ip", METADATA_AT32 + METADATA_AT32_MORE)
+def test_at32_new_metadata_forms_refused_before_any_socket(
+    cli, capsys, gi_config, no_sockets, endpoint, ip, allow_remote
+):
+    gi_config(backend="lmstudio", endpoint=endpoint, allow_remote=allow_remote)
+    for argv in (("ask", "hello"), ("health",), ("--json", "health"), ("task", "list")):
+        err = _metadata_refused(cli, capsys, argv, ip)
+        assert "allow_remote" not in err, "IP literals: the metadata check comes first"
+    assert no_sockets == []
+
+
+@pytest.mark.parametrize("endpoint,ip", METADATA_AT32)
+def test_at32_new_metadata_forms_refused_with_a_token(
+    cli, capsys, gi_config, no_sockets, token_source, endpoint, ip
+):
+    gi_config(backend="lmstudio", endpoint=endpoint, allow_remote=True, **token_source)
+    for argv in (("ask", "hello"), ("health",)):
+        err = _metadata_refused(cli, capsys, argv, ip)
+        assert "API token" not in err
+    assert no_sockets == []
+
+
+@pytest.mark.parametrize("endpoint,ip", METADATA_AT32 + METADATA_AT32_MORE)
+def test_at32_selfcheck_and_token_rule_report_metadata(
+    cli, capsys, gi_config, no_sockets, endpoint, ip
+):
+    for allow_remote in (False, True):
+        assert config.endpoint_privacy(endpoint, allow_remote) == (False, f"METADATA {ip}")
+    assert config.token_destination_ok(endpoint)[0] is False
+    gi_config(backend="lmstudio", endpoint=endpoint, allow_remote=True)
+    assert cli("selfcheck") == 1
+    assert f"[FAIL] model-endpoint-private: METADATA {ip}" in capsys.readouterr().out
+    assert no_sockets == []
+
+
+def test_at32_gateway_resolving_to_alibaba_is_refused(
+    cli, capsys, gi_config, no_sockets, tmp_path, monkeypatch
+):
+    _route_to(tmp_path, monkeypatch, "C8646464")
+    gi_config(backend="lmstudio", endpoint="http://@gateway:1234", allow_remote=True)
+    for argv in (("ask", "hello"), ("health",)):
+        _metadata_refused(cli, capsys, argv, ALIBABA)
+    assert no_sockets == []
+
+
+def test_at32_gateway_without_allow_remote_reads_no_route(
+    cli, capsys, gi_config, no_sockets, tmp_path, monkeypatch
+):
+    _route_to(tmp_path, monkeypatch, "C8646464")
+
+    def no_read(*args, **kwargs):
+        raise AssertionError("the route table must not be read without allow_remote")
+
+    monkeypatch.setattr(config, "default_gateway", no_read)
+    gi_config(backend="lmstudio", endpoint="http://@gateway:1234", allow_remote=False)
+    for argv in (("ask", "hello"), ("health",)):
+        assert cli(*argv) == 2
+        err = capsys.readouterr().err
+        assert "not on this computer" in err
+        assert "metadata" not in err
+    assert no_sockets == []
+
+
+@pytest.mark.parametrize("backend", ["lmstudio", "ollama"])
+def test_at32_name_resolving_to_alibaba_is_refused_without_connect(
+    cli, capsys, gi_config, resolver, wire, backend
+):
+    resolver.answers[NAME] = [ALIBABA]
+    gi_config(backend=backend, endpoint=f"http://{NAME}:1234", model="m", allow_remote=True)
+    for argv in (("ask", "hello"), ("health",)):
+        resolver.calls.clear()
+        assert cli(*argv) == 2
+        assert METADATA_TEXT.format(ip=ALIBABA) in capsys.readouterr().err
+        assert resolver.calls == [NAME]
+    assert wire["connects"] == []
+
+
+def test_at32_name_without_allow_remote_is_not_looked_up(cli, capsys, gi_config, resolver, wire):
+    resolver.answers[NAME] = [ALIBABA]
+    gi_config(backend="lmstudio", endpoint=f"http://{NAME}:1234", allow_remote=False)
+    assert cli("ask", "hello") == 2
+    assert "not on this computer" in capsys.readouterr().err
+    assert resolver.calls == []
+    assert wire["connects"] == []
+
+
+@pytest.mark.parametrize("endpoint,detail", NOT_METADATA_AT32)
+def test_at32_look_alikes_are_not_metadata(gi_config, endpoint, detail):
+    assert config.endpoint_privacy(endpoint, True)[1] == detail
+    gi_config(backend="lmstudio", endpoint=endpoint, allow_remote=True)
+    assert config.load().llm.endpoint == endpoint
+
+
+# Address classes fixed by the spec (B6), the same on every supported Python.
+PUBLIC_AT32 = [
+    ("http://[2001:0:c000:201::3f57:fefe]", "2001:0:c000:201::3f57:fefe"),  # Teredo
+    ("http://[2002:c0a8:1::1]", "2002:c0a8:1::1"),  # 6to4
+    ("http://[2001:db8::1]", "2001:db8::1"),  # documentation
+    ("http://[::ffff:192.168.0.1]", "::ffff:192.168.0.1"),  # IPv4-mapped private
+    ("http://192.0.0.8", "192.0.0.8"),
+    ("http://198.18.0.1", "198.18.0.1"),
+]
+
+
+@pytest.mark.parametrize("endpoint,host", PUBLIC_AT32)
+def test_at32_special_ranges_are_public(cli, capsys, gi_config, no_sockets, endpoint, host):
+    assert config.endpoint_privacy(endpoint, True) == (False, f"PUBLIC {host}")
+    gi_config(backend="lmstudio", endpoint=endpoint, allow_remote=True)
+    assert cli("selfcheck") == 1
+    assert f"[FAIL] model-endpoint-private: PUBLIC {host}" in capsys.readouterr().out
+    assert no_sockets == []
+
+
+@pytest.mark.parametrize("endpoint,host", PUBLIC_AT32)
+@pytest.mark.parametrize("backend", ["lmstudio", "ollama"])
+def test_at32_special_ranges_get_no_token(
+    cli, capsys, gi_config, no_sockets, token_source, backend, endpoint, host
+):
+    gi_config(backend=backend, endpoint=endpoint, allow_remote=True, **token_source)
+    for argv in (("ask", "hello"), ("health",)):
+        assert cli(*argv) == 2
+        out, err = capsys.readouterr()
+        assert DEST_TEXT.format(host=host) in err
+        assert LEAK_MARK not in out + err
+    assert no_sockets == []
+
+
+@pytest.mark.parametrize(
+    "endpoint,detail",
+    [
+        ("http://[fd00::1]", "private network fd00::1"),
+        ("http://100.64.0.1", "private network 100.64.0.1"),
+        ("http://[::ffff:127.0.0.1]", "loopback"),
+    ],
+)
+def test_at32_private_and_loopback_classes(cli, capsys, gi_config, endpoint, detail):
+    assert config.endpoint_privacy(endpoint, True) == (True, detail)
+    gi_config(backend="lmstudio", endpoint=endpoint, allow_remote=True)
+    assert cli("selfcheck") == 0
+    assert f"[PASS] model-endpoint-private: {detail}" in capsys.readouterr().out
+
+
+def test_at32_localhost_resolving_to_mapped_loopback_is_loopback(
+    cli, capsys, lmstudio_config, resolver, wire
+):
+    server = lmstudio_config.server
+    lmstudio_config(endpoint=f"http://localhost:{server.port}")
+    resolver.answers["localhost"] = ["::ffff:127.0.0.1"]
+    code = cli("ask", "q")
+    err = capsys.readouterr().err
+    assert "localhost does not resolve to loopback" not in err
+    assert code != 2, err
+    assert config.is_loopback_address("::ffff:127.0.0.1")
+    assert not config.is_loopback_address("::ffff:192.168.0.1")

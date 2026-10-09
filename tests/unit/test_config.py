@@ -550,7 +550,7 @@ def with_token(request, monkeypatch, home_token):
         ("http://172.29.224.1:1234", "http://172.29.224.1:1234"),
         ("http://[fe80::1]:1234", "http://[fe80::1]:1234"),
         ("https://100.64.0.1:8443", "https://100.64.0.1:8443"),
-        ("http://[::ffff:10.0.0.1]:1234", "http://[::ffff:10.0.0.1]:1234"),
+        ("http://[::ffff:127.0.0.1]:1234", "http://[::ffff:127.0.0.1]:1234"),
     ],
 )
 @pytest.mark.parametrize("backend", ["lmstudio", "ollama"])
@@ -584,6 +584,7 @@ def test_at18_token_refused_for_public_or_dns_endpoints(
         "http://[2001:db8::1]:1234",
         "http://[2606:4700::1111]:1234",
         "http://[::ffff:8.8.8.8]:1234",
+        "http://[::ffff:10.0.0.1]:1234",  # 1.6.0 B6: IPv4-mapped private is public
         "http://100.128.0.1:1234",
         "http://172.32.0.1:1234",
         "https://lmstudio.example:443",
@@ -681,7 +682,8 @@ def test_at18_token_destination_ok_agrees_with_endpoint_privacy(route_file, endp
     "endpoint,ok",
     [
         ("http://[::ffff:8.8.8.8]:1234", False),
-        ("http://[::ffff:10.0.0.1]:1234", True),
+        ("http://[::ffff:10.0.0.1]:1234", False),  # 1.6.0 B6: IPv4-mapped private is public
+        ("http://[::ffff:127.0.0.1]:1234", True),
         ("http://8.8.8.8:1234", False),
         ("http://example.org:1234", False),
         ("http://127.0.0.1:1234", True),
@@ -1092,3 +1094,112 @@ def test_at26_swap_right_before_the_file_open_never_reads_the_decoy(
     assert done, "the hook ran"
     # The walk holds the original folder open: the file checked is the file read, never the decoy.
     assert token == LEAK_MARK
+
+
+# --- SPEC-0001 1.6.0: fixed address classes (B6), max_document_chars (B7) -----------------------
+
+ADDRESS_CLASSES = [
+    # loopback: 127.0.0.0/8, ::1, ::ffff:127.0.0.0/104
+    ("127.0.0.0", "loopback"),
+    ("127.255.255.255", "loopback"),
+    ("126.255.255.255", "public"),
+    ("128.0.0.0", "public"),
+    ("::1", "loopback"),
+    ("::2", "public"),
+    ("::", "public"),
+    ("::ffff:127.0.0.0", "loopback"),
+    ("::ffff:127.255.255.255", "loopback"),
+    ("::ffff:128.0.0.0", "public"),
+    ("::ffff:126.255.255.255", "public"),
+    # private
+    ("10.0.0.0", "private"),
+    ("10.255.255.255", "private"),
+    ("9.255.255.255", "public"),
+    ("11.0.0.0", "public"),
+    ("172.16.0.0", "private"),
+    ("172.31.255.255", "private"),
+    ("172.15.255.255", "public"),
+    ("172.32.0.0", "public"),
+    ("192.168.0.0", "private"),
+    ("192.168.255.255", "private"),
+    ("192.167.255.255", "public"),
+    ("192.169.0.0", "public"),
+    ("100.64.0.0", "private"),
+    ("100.127.255.255", "private"),
+    ("100.63.255.255", "public"),
+    ("100.128.0.0", "public"),
+    ("169.254.0.0", "private"),
+    ("169.254.255.255", "private"),
+    ("169.253.255.255", "public"),
+    ("169.255.0.0", "public"),
+    ("fc00::", "private"),
+    ("fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "private"),
+    ("fbff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "public"),
+    ("fe00::", "public"),
+    ("fe80::", "private"),
+    ("febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "private"),
+    ("fe7f:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "public"),
+    ("fec0::", "public"),
+    # Python's is_private says yes to these; the spec says public.
+    ("192.0.0.8", "public"),
+    ("192.0.2.1", "public"),
+    ("198.18.0.1", "public"),
+    ("198.51.100.1", "public"),
+    ("203.0.113.1", "public"),
+    ("240.0.0.1", "public"),
+    ("255.255.255.255", "public"),
+    ("0.0.0.0", "public"),  # noqa: S104 - an address to classify, nothing binds
+    ("2001::1", "public"),
+    ("2001:db8::1", "public"),
+    ("2002::1", "public"),
+    ("64:ff9b::a00:1", "public"),
+    ("64:ff9b:1::1", "public"),
+    ("::ffff:10.0.0.1", "public"),
+    ("::ffff:192.168.0.1", "public"),
+    ("::ffff:169.254.1.1", "public"),
+    ("::10.0.0.1", "public"),
+    ("100::1", "public"),
+]
+
+
+@pytest.mark.parametrize("address,expected", ADDRESS_CLASSES)
+def test_at32_address_class_table(address, expected):
+    import ipaddress
+
+    assert config.address_class(ipaddress.ip_address(address)) == expected
+
+
+def test_at32_no_python_address_class_attributes_in_runtime():
+    """The classes come from the spec's tables, never from ipaddress.is_* (B6)."""
+    import re
+
+    runtime = pathlib.Path(config.__file__).parent
+    pattern = re.compile(
+        r"\.is_(private|global|loopback|link_local|reserved|multicast|unspecified|site_local)\b"
+    )
+    found = [
+        f"{path.name}:{n}"
+        for path in sorted(runtime.rglob("*.py"))
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if pattern.search(line)
+    ]
+    assert found == []
+
+
+def test_at36_max_document_chars_default(gi_config):
+    gi_config(backend="echo")
+    assert config.load().limits.max_document_chars == 20000
+
+
+@pytest.mark.parametrize("value", [1000, 20000, 1000000])
+def test_at36_max_document_chars_accepted(gi_config, value):
+    gi_config({"limits": {"max_document_chars": value}}, backend="echo")
+    assert config.load().limits.max_document_chars == value
+
+
+@pytest.mark.parametrize("value", [999, 1000001, 0, -1, "x", 1.5, True])
+def test_at36_max_document_chars_refused(cli, capsys, gi_config, value):
+    gi_config({"limits": {"max_document_chars": value}}, backend="echo")
+    _load_error("limits.max_document_chars")
+    assert cli("ask", "hello") == 2
+    assert "limits.max_document_chars" in capsys.readouterr().err

@@ -88,6 +88,7 @@ computer or in a private network, and never prints or stores it.
 gi health                       # is the model server reachable?
 gi ask "Explain what a hash-chained audit log is in two sentences."
 gi ask --verbose "What is the capital of Slovakia?"   # adds token counts and speed
+gi ask --file notes.txt "Summarise this in three points."   # a question about a text file
 gi init-workspace               # your private workspace (readable only by you)
 gi task new --type req --title "Try Ĝi"
 gi task list

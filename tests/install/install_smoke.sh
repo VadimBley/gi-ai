@@ -18,13 +18,14 @@ DEB="$1"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq "$DEB" >/dev/null
+# shellcheck source=/dev/null
 . /etc/os-release && echo "distro: $PRETTY_NAME, python: $(python3 --version)"
 gi --version
 useradd -m tester
 su tester -c 'mkdir -p ~/.config/gi-ai && printf "[llm]\nbackend = \"echo\"\n" > ~/.config/gi-ai/gi.toml && chmod 600 ~/.config/gi-ai/gi.toml'
 su tester -c 'gi --json health'
 # echo backend returns the whole wrapped prompt: check the prefix and the question line
-su tester -c 'gi ask "hello"' > /tmp/gi-ask.out
+su tester -c 'gi ask "hello" < /dev/null' > /tmp/gi-ask.out
 grep -q "^echo: " /tmp/gi-ask.out
 grep -qx hello /tmp/gi-ask.out
 su tester -c 'gi init-workspace >/dev/null && gi task new --type req --title smoke >/dev/null && gi selfcheck'

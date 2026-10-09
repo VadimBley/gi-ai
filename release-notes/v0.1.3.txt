@@ -1,0 +1,48 @@
+Ĝi 0.1.3 - ask about a document, security fixes
+
+New
+- gi ask can now answer a question about a text file:
+    gi ask --file notes.txt "Summarise this in three points."
+  Use --file - to read standard input, or pipe the text in:
+    printf 'notes' | gi ask "summarise"
+  The document goes to the model between its own markers, as data to read and never as
+  instructions. It goes only where the question goes and is never written to the workspace,
+  the audit log or any file. The new setting limits.max_document_chars (default 20000,
+  1000 to 1000000) sets the longest document.
+- Some files are refused (exit 2, "cannot use PATH: reason"):
+  - hidden files and folders, and upper-case Markdown names such as README.md;
+  - symbolic links, folders, FIFOs and devices;
+  - anything under /proc, /sys or /dev, and the API token file;
+  - text that is not UTF-8 or that contains the API token.
+  See man gi-ai for all the rules.
+
+Security
+- The Alibaba Cloud metadata address 100.100.100.200 is refused like the other cloud metadata
+  addresses. Metadata addresses hidden in Teredo (2001::/32) and ISATAP addresses are refused
+  too.
+- The address classes (loopback, private, public) are now fixed and the same on every Python
+  version. Teredo, 6to4, NAT64, documentation and other special ranges are public, and so are
+  IPv4-mapped forms of private addresses such as ::ffff:192.168.0.1. An API token is never
+  sent to a public address.
+- The question and document markers can no longer be split with lone surrogates (from
+  arguments that are not valid UTF-8) or private-use characters. These characters are removed.
+
+Changes you may notice
+- gi ask now reads text that is piped into it. A script that starts gi ask with an open pipe
+  on standard input and writes nothing to it waits timeout_s seconds and then stops with
+  "timed out reading the document" (exit 2). A loop such as
+    cat list | while read q; do gi ask "$q"; done
+  would send the rest of the list as a document. Give such calls no input:
+    gi ask "$q" < /dev/null
+- gi selfcheck now reports PUBLIC for the addresses that became public above. An API token
+  is refused for them.
+- With @gateway and allow_remote = false, the endpoint is refused before the route table is
+  read.
+
+Upgrade
+  sudo apt update && sudo apt upgrade
+
+Your configuration and workspace stay as they are. Check the new version with: gi --version
+
+Report bugs to bugs@gi-ai.app. Report security problems only privately through
+https://github.com/VadimBley/gi-ai/security/advisories/new

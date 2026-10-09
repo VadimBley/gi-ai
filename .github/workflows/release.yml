@@ -12,8 +12,10 @@
 # If not, see <https://www.gnu.org/licenses/>.
 
 # Release: started by hand with the version to release.
-#   build   (read-only): .deb (no pip) and SHA256SUMS, hashed before any third-party code runs;
-#           then the SPDX SBOM; the hashes are job outputs
+#   build   (read-only): .deb (no pip) and SHA256SUMS, hashed; runs no third-party code; the
+#           hashes are job outputs
+#   sbom    (read-only): the SPDX SBOM, made apart from the build from the downloaded .deb after
+#           checking it against the build job's hash; the SBOM's hash is its output
 #   test    (read-only): the package tests against a freshly built .deb
 #   release (environment 'production', the only job with write/OIDC permissions; runs only the
 #           pinned attest actions and gh): checks the downloaded files against the build job's
@@ -41,7 +43,6 @@ jobs:
     outputs:
       deb_sha256: ${{ steps.hashes.outputs.deb_sha256 }}
       notes_sha256: ${{ steps.hashes.outputs.notes_sha256 }}
-      sbom_sha256: ${{ steps.sbom_hash.outputs.sbom_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false, fetch-depth: 0 }
@@ -63,8 +64,8 @@ jobs:
           bash tools/build_deb.sh
           (cd dist && sha256sum "gi-ai_${VERSION}_all.deb" > SHA256SUMS)
           cp "release-notes/v$VERSION.txt" dist/release-notes.txt
-      # Hashed before any third-party code runs in this job: anything that changes the .deb or the
-      # notes later only makes the release job fail.
+      # Hashed here: anything that changes the .deb or the notes later only makes the release
+      # job fail.
       - id: hashes
         name: Hash the package and the notes
         env:
@@ -74,13 +75,37 @@ jobs:
             echo "deb_sha256=$(sha256sum "dist/gi-ai_${VERSION}_all.deb" | cut -d' ' -f1)"
             echo "notes_sha256=$(sha256sum dist/release-notes.txt | cut -d' ' -f1)"
           } >> "$GITHUB_OUTPUT"
-      - uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
-        with: { path: dist, format: spdx-json, output-file: dist/gi-ai.spdx.json, upload-artifact: false }
-      - id: sbom_hash
-        name: Hash the SBOM
-        run: echo "sbom_sha256=$(sha256sum dist/gi-ai.spdx.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with: { name: release, path: dist/, retention-days: 30 }
+
+  # The SBOM tool is third-party code: it runs apart from the build, on the downloaded .deb only,
+  # after checking that .deb against the build job's hash.
+  sbom:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      sbom_sha256: ${{ steps.sbom_hash.outputs.sbom_sha256 }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with: { name: release, path: in }
+      - name: Check the package against the build job's hash
+        env:
+          VERSION: ${{ inputs.version }}
+          DEB_SHA256: ${{ needs.build.outputs.deb_sha256 }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          [[ "$DEB_SHA256" =~ ^[0-9a-f]{64}$ ]] || exit 1
+          mkdir deb
+          cp "in/gi-ai_${VERSION}_all.deb" deb/
+          echo "$DEB_SHA256  deb/gi-ai_${VERSION}_all.deb" | sha256sum --strict -c
+      - uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with: { path: deb, format: spdx-json, output-file: gi-ai.spdx.json, upload-artifact: false }
+      - id: sbom_hash
+        name: Hash the SBOM
+        run: echo "sbom_sha256=$(sha256sum gi-ai.spdx.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with: { name: sbom, path: gi-ai.spdx.json, retention-days: 30 }
 
   test:
     runs-on: ubuntu-latest
@@ -88,11 +113,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false, fetch-depth: 0 }
-      - run: python3 -m pip install pytest
+      - run: python3 -m pip install --require-hashes --no-deps -r requirements-release.txt
       - run: make deb
 
   release:
-    needs: [build, test]
+    needs: [build, test, sbom]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
@@ -103,11 +128,13 @@ jobs:
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with: { name: release, path: dist }
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with: { name: sbom, path: dist }
       - name: Check the files against the build job's hashes
         env:
           VERSION: ${{ inputs.version }}
           DEB_SHA256: ${{ needs.build.outputs.deb_sha256 }}
-          SBOM_SHA256: ${{ needs.build.outputs.sbom_sha256 }}
+          SBOM_SHA256: ${{ needs.sbom.outputs.sbom_sha256 }}
           NOTES_SHA256: ${{ needs.build.outputs.notes_sha256 }}
         run: |
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1

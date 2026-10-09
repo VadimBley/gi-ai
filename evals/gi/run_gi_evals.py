@@ -49,7 +49,9 @@ def derive_model(base: str, name: str, temperature: float, seed: int, workdir: P
     return name
 
 
-def ask(question: str, model: str, home: Path) -> subprocess.CompletedProcess[str]:
+def ask(
+    question: str, model: str, home: Path, document: str | None = None
+) -> subprocess.CompletedProcess[str]:
     cfg = home / f"{model}.toml"
     cfg.write_text(f'[llm]\nmodel = "{model}"\ntimeout_s = 300\n', encoding="utf-8")
     env = {
@@ -58,9 +60,15 @@ def ask(question: str, model: str, home: Path) -> subprocess.CompletedProcess[st
         "GI_AI_CONFIG": str(cfg),
         "PYTHONPATH": str(REPO / "runtime"),
     }
+    argv = [sys.executable, "-m", "gi_ai", "ask"]
+    if document is not None:
+        doc = home / "document.txt"
+        doc.write_text(document, encoding="utf-8")
+        argv += ["--file", str(doc)]
     return subprocess.run(
-        [sys.executable, "-m", "gi_ai", "ask", question],
+        [*argv, question],
         env=env,
+        stdin=subprocess.DEVNULL,  # an inherited pipe would be read as a document
         capture_output=True,
         text=True,
         timeout=400,
@@ -88,7 +96,7 @@ def main() -> int:
         for case in cases:
             if case.get("blocking", True):
                 blocking += 1
-                r = ask(case["question"], fixed, home)
+                r = ask(case["question"], fixed, home, case.get("document"))
                 ok = passes(case, r)
                 print(f"{'PASS' if ok else 'FAIL'} {case['name']}")
                 if not ok:
@@ -101,7 +109,7 @@ def main() -> int:
                 seed = EVAL_SEED + i
                 name = f"gi-eval-measure-{seed}"
                 model = derive_model(args.model, name, MEASURE_TEMPERATURE, seed, home)
-                r = ask(case["question"], model, home)
+                r = ask(case["question"], model, home, case.get("document"))
                 ok = passes(case, r)
                 resisted += ok
                 print(f"  {case['name']} seed {seed}: {'resisted' if ok else 'obeyed'}")

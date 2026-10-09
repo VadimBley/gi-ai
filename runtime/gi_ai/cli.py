@@ -20,12 +20,14 @@ import functools
 import json
 import math
 import os
+import re
 import stat
 import sys
 import unicodedata
 from pathlib import Path
+from typing import Any
 
-from gi_ai import DISPLAY_NAME, __version__, assets, tasks, workspace
+from gi_ai import DISPLAY_NAME, __version__, assets, document, tasks, workspace
 from gi_ai.config import Config, ConfigError, endpoint_privacy, load, token_file_privacy
 from gi_ai.contracts import validate
 from gi_ai.llm import (
@@ -39,8 +41,8 @@ from gi_ai.llm import (
 
 EXIT_OK, EXIT_FAIL, EXIT_USAGE = 0, 1, 2
 
-# The markers around the question in the ask prompt; a question may not carry its own.
-MARKERS = ("<<<QUESTION", "QUESTION>>>")
+# The markers around the question and the document in the ask prompt; neither may carry its own.
+MARKERS = ("<<<QUESTION", "QUESTION>>>", "<<<DOCUMENT", "DOCUMENT>>>")
 MARKER_REMOVED = "[marker removed]"
 _MARKS = frozenset({"Mn", "Mc", "Me"})
 # Default_Ignorable_Code_Point ranges from Unicode 15.1.0 DerivedCoreProperties.txt, pinned so
@@ -64,6 +66,16 @@ INVISIBLE_RANGES = (
     (0x1D173, 0x1D17A),
     (0xE0000, 0xE0FFF),
 )
+# Lone surrogates and private-use characters, pinned too (unchanged since Unicode 2.0).
+SURROGATE_PRIVATE_RANGES = (
+    (0xD800, 0xDFFF),
+    (0xE000, 0xF8FF),
+    (0xF0000, 0xFFFFD),
+    (0x100000, 0x10FFFD),
+)
+_REMOVED_CATEGORIES = frozenset({"Cf", "Cn", "Cs", "Co"})
+# Control characters (Cc) other than newline and tab, removed from a document.
+_DOCUMENT_CONTROLS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 VERSION_TEXT = (
     f"gi-ai {__version__}\n"
@@ -78,25 +90,51 @@ VERSION_TEXT = (
 
 @functools.lru_cache(maxsize=4096)
 def _invisible(char: str) -> bool:
-    if unicodedata.category(char) in ("Cf", "Cn"):
+    if unicodedata.category(char) in _REMOVED_CATEGORIES:
         return True
     code = ord(char)
-    return any(low <= code <= high for low, high in INVISIBLE_RANGES)
+    return any(low <= code <= high for low, high in INVISIBLE_RANGES + SURROGATE_PRIVATE_RANGES)
 
 
-def normalise_question(question: str, limit: int | None = None) -> str:
-    """NFKC, then without invisible characters (format, unassigned, default-ignorable).
+# Pieces that each start with an ASCII character (or the text's start). NFKC never joins a
+# character with a following ASCII one (no composition has an ASCII second part, and an ASCII
+# character is a starter that canonical ordering never moves), so the text may be normalised
+# piece by piece, cut only before an ASCII character, with the same result as all at once.
+_SAFE_PIECES = re.compile(r"[\x00-\x7f]*[^\x00-\x7f]*")
 
-    With a limit, filtering stops once the kept text is longer than it: the caller only needs
-    to know that it is too long, not the rest of a text that NFKC grew many times over.
+
+def normalise_question(question: str, limit: int | None = None, chunk_chars: int = 8192) -> str:
+    """NFKC, then without invisible characters (format, unassigned, surrogate, private use,
+    default-ignorable).
+
+    With a limit, work stops once the kept text is longer than it: the caller only needs to
+    know that it is too long, not the rest of a text that NFKC grew many times over. NFKC runs
+    on pieces of about `chunk_chars` characters, so that stop comes early.
     """
-    text = unicodedata.normalize("NFKC", question)
     kept: list[str] = []
-    for char in text:
-        if not _invisible(char):
-            kept.append(char)
-            if limit is not None and len(kept) > limit:
-                break
+
+    def take(text: str) -> bool:
+        for char in unicodedata.normalize("NFKC", text):
+            if not _invisible(char):
+                kept.append(char)
+                if limit is not None and len(kept) > limit:
+                    return False
+        return True
+
+    buffer: list[str] = []
+    size = 0
+    for match in _SAFE_PIECES.finditer(question):
+        piece = match.group()
+        if not piece:
+            continue
+        buffer.append(piece)
+        size += len(piece)
+        if size >= chunk_chars:
+            if not take("".join(buffer)):
+                return "".join(kept)
+            buffer, size = [], 0
+    if buffer:
+        take("".join(buffer))
     return "".join(kept)
 
 
@@ -196,6 +234,40 @@ def stats_line(reply: ChatReply) -> str:
     return "stats: " + (" ".join(parts) if parts else "none")
 
 
+def document_text(raw: str, limit: int, token: str | None) -> str:
+    """A decoded document, checked and normalised like a question (not yet neutralised)."""
+    secrets = () if not token else (token, normalise_question(token))
+    if any(s and s in raw for s in secrets):
+        raise document.DocumentError("the document contains the API token")
+    if len(raw) > limit:
+        raise document.DocumentError(f"document longer than {limit} characters")
+    text = _DOCUMENT_CONTROLS.sub("", raw.replace("\r\n", "\n").replace("\r", "\n"))
+    normalised = normalise_question(text, limit)
+    if len(normalised) > limit:
+        raise document.DocumentError(f"document longer than {limit} characters after normalising")
+    if any(s and s in normalised for s in secrets):
+        raise document.DocumentError("the document contains the API token")
+    return normalised
+
+
+def _document(cfg: Config, args: argparse.Namespace) -> str | None:
+    """The document for this question: --file PATH, --file -, a pipe on standard input, or None."""
+    limit, timeout = cfg.limits.max_document_chars, cfg.llm.timeout_s
+    explicit = args.file is not None
+    if args.file is None or args.file == "-":
+        raw = document.read_stdin(explicit, limit, timeout)
+        if raw is None:
+            return None
+    else:
+        raw = document.read_file(args.file, limit, timeout, cfg.llm.token_file)
+    text = document_text(raw, limit, cfg.llm.token)
+    if not text:
+        if explicit:
+            raise document.DocumentError("the document is empty")
+        return None  # an empty pipe is no document
+    return text
+
+
 def cmd_ask(cfg: Config, args: argparse.Namespace) -> int:
     question = " ".join(args.question).strip()
     if not question:
@@ -214,12 +286,18 @@ def cmd_ask(cfg: Config, args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return EXIT_USAGE
+    try:
+        doc = _document(cfg, args)
+    except document.DocumentError as exc:
+        print(f"gi ask: {exc}", file=sys.stderr)
+        return EXIT_USAGE
     system = assets.load_toml("prompts", "system.toml")["prompt"]["text"]
-    template = assets.load_toml("prompts", "ask.toml")["prompt"]["text"]
-    messages = [
-        Message("system", system),
-        Message("user", template.replace("{{question}}", neutralise_markers(normalised))),
-    ]
+    ask = assets.load_toml("prompts", "ask.toml")
+    user = ask["prompt"]["text"].replace("{{question}}", neutralise_markers(normalised))
+    if doc is not None:
+        wrapped = ask["document"]["text"].replace("{{document}}", neutralise_markers(doc))
+        user = wrapped + "\n" + user
+    messages = [Message("system", system), Message("user", user)]
     try:
         reply = make_backend(cfg.llm).chat(messages)
     except LLMError as exc:
@@ -290,6 +368,21 @@ def cmd_selfcheck(cfg: Config, args: argparse.Namespace) -> int:
     return EXIT_OK if result["ok"] else EXIT_FAIL
 
 
+class _Once(argparse.Action):
+    """An option that may be given only once."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: Any,
+        option_string: str | None = None,
+    ) -> None:
+        if getattr(namespace, self.dest, None) is not None:
+            parser.error(f"{option_string} may be given only once")
+        setattr(namespace, self.dest, values)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="gi", description=f"{DISPLAY_NAME}: local AI assistant")
     # Handled in main() before parsing, so no config, token or network is touched.
@@ -301,6 +394,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("health", help="check that Ĝi and the local model work")
     a = sub.add_parser("ask", help="ask the local model a question")
     a.add_argument("--verbose", action="store_true", help="also print reply statistics")
+    a.add_argument(
+        "--file",
+        action=_Once,
+        metavar="PATH",
+        help="a text file the question is about (- for standard input)",
+    )
     a.add_argument("question", nargs="+")
     w = sub.add_parser("init-workspace", help="create your private workspace")
     w.add_argument("--path", help="workspace directory")

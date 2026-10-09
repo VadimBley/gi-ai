@@ -47,7 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false, fetch-depth: 0 }
-      - run: python3 -m pip install pytest
+      - run: python3 -m pip install --require-hashes --no-deps -r requirements-release.txt
       - run: make deb
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with: { name: deb, path: dist/*.deb, retention-days: 7 }

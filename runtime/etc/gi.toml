@@ -44,6 +44,7 @@ allow_remote = false                  # true allows an endpoint on another compu
 [limits]
 max_input_chars = 8000
 max_output_chars = 16000
+max_document_chars = 20000            # longest document for gi ask --file (1000-1000000)
 
 [workspace]
 # path = "~/.local/share/gi-ai/workspace"
