@@ -4,31 +4,31 @@ Hash: SHA512
 Architectures: amd64
 Codename: stable
 Components: main
-Date: Thu, 08 Oct 2026 21:24:10 +0000
+Date: Sat, 10 Oct 2026 21:52:15 +0000
 Description: Ĝi (gi-ai) APT repository
 Label: gi-ai
 Origin: gi-ai
 Suite: stable
 MD5Sum:
- a06187f0d91a9a9ff4e248890fbc8394             2748 main/binary-amd64/Packages
- 27877a66f76416b28810585a90c34cc1             1050 main/binary-amd64/Packages.gz
+ e80687c65f94362634d7436257dfd689             3664 main/binary-amd64/Packages
+ 6a2e1586ad473b163b93b09e845fcd88             1237 main/binary-amd64/Packages.gz
 SHA1:
- efab18a4327c889ec18a780bafa465838dadaec5             2748 main/binary-amd64/Packages
- 27d3601811e88bfa032ade8f100c12d157a8ff0c             1050 main/binary-amd64/Packages.gz
+ 91b5608bf07b9ef7bc8c11bf566ce4bba7e0ee4e             3664 main/binary-amd64/Packages
+ e16119c25d52f1497007ac5b8774368b99d833eb             1237 main/binary-amd64/Packages.gz
 SHA256:
- 0c99bc6f39b16532fc1413b231406871469367d8326e9600f5345e809fa2881c             2748 main/binary-amd64/Packages
- 0045d30bb3325cfe250e88cccb975ea6c86562f3d3ff6f8374986fdb3e6382da             1050 main/binary-amd64/Packages.gz
+ 60b649c8eb97b6c3878c3b72242cbfba037fef0f2f97eef80bc7352c92c6752f             3664 main/binary-amd64/Packages
+ 41896f4b7e13d157b2380752d9651102e7c39c557c13412584c73e913f2f1d70             1237 main/binary-amd64/Packages.gz
 SHA512:
- 44bb1842b748564a4b8583d9e7a5591610dd9d352afb6d1b36c61596103c2f106f5cd537381cca2cbee0fd370ac930ee1ee6d4ab643c27296e27990de7a6dabf             2748 main/binary-amd64/Packages
- 30a51f704fd79cfebf3b9b7c4b59a4ccbb75753bfd63b2304cef55fd5ecb4be2328d4ecfda68790d6079ef3089d0119c9e5310d9b9bb3b9d306925c68c86124c             1050 main/binary-amd64/Packages.gz
+ 430169323a832d7cf6bcc8fccac9f2d341160b6fa3c3a2ee2bc22b2c9d60928d343bd3ce05c4392c3f14020dc40586dac92fd4a9330c7d117b1c3736d2882f38             3664 main/binary-amd64/Packages
+ f6e358aa50cde1040d357565ca7c884e8e018714bd1110c9f21638462c99088bdae1ed4777581a2a6d7707b3e4ad0a12fba2d801387d4a771ad98972d7f6430b             1237 main/binary-amd64/Packages.gz
 -----BEGIN PGP SIGNATURE-----
 
-iQEzBAEBCgAdFiEE1SP1vyaN/Z/NCCOR4bYYEBxkVKAFAmrICqoACgkQ4bYYEBxk
-VKDLSggAiJBRojppeN6W/7EEOzt95Hzxe9DSU73p7YSqbmvjzPXmlM+rbGHjloUh
-rzHqLs9Xif2GQfPm7x+5gChjZR0nN+y6vUm547aGdMJbptvpWGwEbjZfoGVCxzxe
-cE9ZHCuP62nDGlxPLAzAY8iNCvZZRUzQviTSGRAum/8NYVoxbbLJYsHyhruyCwNI
-e75xcflGCTtfqUXOVPyv103Bkk7sKCqgwA2z3Q1XI75nHDmQI277ZxtdpKSxd4vt
-pubjpUY3Dyl3mZ5f0PYWPlgGGkceJTnn308TMfbAvgp3wywemf2H7WCkH0IiH3hh
-PnP5HkNSA1BSmTVAwQRB7XdS1fUBrA==
-=Cftb
+iQEzBAEBCgAdFiEE1SP1vyaN/Z/NCCOR4bYYEBxkVKAFAmrKtZEACgkQ4bYYEBxk
+VKAs5QgAhSRZbDPFWv4mND/8Qhj+tm8BxTayH2Zf28M5hZGbJysHmxYbqgJcWgO6
+oGkfCSbQPk+R+a075Zz51bMuYFQO38DobkeDBVJgIJrwIjlRRb2MolaJgQGRNwTm
+luozOEJL9z1cIU2yIS8OPpgxC/Brq/ST4z4xNNZoTYeab+Wgebwh5ZPw/HfnTNGy
+7Yo2h36Okplwo+xdew0OcZ37RXoOsqo5KsQOl3tsmD4Hho8rEPvmwti865qxcPkA
+1n8XTGnITDTtotmLMJUxCpMasiA6MWobJ8TXibh3zaFNYj7J9uOZUdu9OBZSUWKt
+Sk4CF8oFSfKv+pr7gxzMU3ms1XqqgQ==
+=ZmEZ
 -----END PGP SIGNATURE-----

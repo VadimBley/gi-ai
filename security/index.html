@@ -20,8 +20,9 @@
 <h2>How Ĝi protects you</h2>
 <ul>
 <li>It connects only to the model server you configure; other computers need an explicit <code>allow_remote = true</code>.</li>
-<li>Cloud metadata addresses (such as <code>169.254.169.254</code>) are always refused as a model server, even with <code>allow_remote = true</code>: in every spelling, inside IPv6 addresses that carry them, and when a host name is looked up and resolves to one. Ĝi connects only to the addresses it looked up and checks the connected address again before sending anything.</li>
-<li>An API token is sent only to local or private network addresses, never to the internet.</li>
+<li>Cloud metadata addresses (such as <code>169.254.169.254</code> and Alibaba Cloud's <code>100.100.100.200</code>) are always refused as a model server, even with <code>allow_remote = true</code>: in every spelling, inside IPv6 addresses that carry them, and when a host name is looked up and resolves to one. Ĝi connects only to the addresses it looked up and checks the connected address again before sending anything.</li>
+<li>An API token is sent only to local or private network addresses, never to the internet. Which addresses count as private is fixed by Ĝi, not by your Python version.</li>
+<li>A document you give <code>gi ask</code> (a file you name, or text you pipe in) is placed between its own markers and the model is told it is data, never instructions. Ĝi refuses hidden files, upper-case Markdown instruction files, links, devices, system files and the token file, and never stores the document.</li>
 <li>Proxy settings are ignored and redirects are not followed, so requests can't be diverted.</li>
 <li>Model answers are treated as untrusted: terminal control sequences are removed before printing.</li>
 <li>Ĝi has no tools and can't act on your system; a model reply that tries to call a tool is refused.</li>
